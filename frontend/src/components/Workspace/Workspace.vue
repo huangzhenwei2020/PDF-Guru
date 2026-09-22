@@ -155,6 +155,8 @@
                     <a-button size="small" :disabled="!canEdit" @click="store.toggleRemoveAnnots()">
                         {{ removeAnnotsMarked ? "取消删除批注" : "删除批注" }}
                     </a-button>
+                    <a-button size="small" :disabled="!canEdit" @click="doExtractText">提取文本</a-button>
+                    <a-button size="small" :disabled="!canEdit" @click="doExtractImages">提取图片</a-button>
                     <span v-if="mode !== 'view'" class="ws-modehint">
                         {{ mode === 'crop' ? '在页面上拖拽框出要保留的区域' : '在页面上拖拽框出要遮盖的区域' }}
                         <template v-if="store.targetIds.length > 1">（将应用到选中的 {{ store.targetIds.length }} 页）</template>
@@ -398,6 +400,20 @@
                 <span class="sc-desc">{{ s[1] }}</span>
             </div>
         </a-modal>
+        <!-- 本页文本 -->
+        <a-modal v-model:visible="textVisible" title="本页文本" :width="660" :footer="null">
+            <div v-if="textLoading" class="ws-hint">提取中…</div>
+            <template v-else>
+                <div class="ws-note">
+                    共 {{ pageText.length }} 个字符
+                    <span v-if="!pageText">（该页没有可提取的文本，可能是扫描件，需要 OCR）</span>
+                </div>
+                <textarea class="ws-textbox" readonly :value="pageText"></textarea>
+                <div style="margin-top: 10px; text-align: right;">
+                    <a-button @click="copyText" :disabled="!pageText">复制到剪贴板</a-button>
+                </div>
+            </template>
+        </a-modal>
     </div>
 </template>
 
@@ -419,7 +435,15 @@ import {
     SaveOutlined,
     UndoOutlined,
 } from '@ant-design/icons-vue';
-import { SelectFile, SelectMultipleFiles, SaveFile } from '../../../wailsjs/go/main/App';
+import {
+    SelectFile,
+    SelectMultipleFiles,
+    SelectDir,
+    SaveFile,
+    SetClipboard,
+    WorkspacePageText,
+    WorkspacePageImages,
+} from '../../../wailsjs/go/main/App';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
@@ -917,6 +941,55 @@ export default defineComponent({
             store.selected.length ? `（已选 ${store.selected.length} 页）` : '（当前没有选中页，将不生效）'
         );
 
+        // --- 提取当前页文本 / 图片 -----------------------------------------
+
+        const textVisible = ref(false);
+        const textLoading = ref(false);
+        const pageText = ref('');
+
+        const doExtractText = async () => {
+            const it = store.currentItem;
+            if (!it || it.kind !== 'page') {
+                message.info('请先选中一页内容页');
+                return;
+            }
+            textVisible.value = true;
+            textLoading.value = true;
+            pageText.value = '';
+            try {
+                pageText.value = await WorkspacePageText(it.docId, it.pageIndex);
+            } catch (e: any) {
+                fail(e);
+            } finally {
+                textLoading.value = false;
+            }
+        };
+
+        const copyText = async () => {
+            try {
+                await SetClipboard(pageText.value);
+                message.success('已复制到剪贴板');
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
+        const doExtractImages = async () => {
+            const it = store.currentItem;
+            if (!it || it.kind !== 'page') {
+                message.info('请先选中一页内容页');
+                return;
+            }
+            try {
+                const dir: string = await SelectDir();
+                if (!dir) return;
+                const out = await WorkspacePageImages(it.docId, it.pageIndex, dir);
+                message.success(`图片已导出到 ${out}`);
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
         // --- 其它交互 -----------------------------------------------------
 
         const onNeedThumbs = (ids: string[]) => {
@@ -1011,6 +1084,7 @@ export default defineComponent({
                             openShortcuts: () => {
                                 shortcutVisible.value = true;
                             },
+                            openText: () => doExtractText(),
                         });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
@@ -1045,6 +1119,13 @@ export default defineComponent({
             onThumbWidthChange,
             shortcutVisible,
             shortcuts,
+            // 提取文本 / 图片
+            doExtractText,
+            doExtractImages,
+            copyText,
+            textVisible,
+            textLoading,
+            pageText,
             canvasRef,
             // 裁剪 / 遮盖
             mode,
@@ -1195,6 +1276,20 @@ export default defineComponent({
 .sc-desc {
     font-size: 13px;
     color: #555;
+}
+
+.ws-textbox {
+    width: 100%;
+    height: 260px;
+    margin-top: 8px;
+    padding: 8px;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    border: 1px solid #e8e8e8;
+    border-radius: 4px;
+    resize: vertical;
+    background: #fafafa;
 }
 
 .pv-draw {

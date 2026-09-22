@@ -286,6 +286,14 @@ export function WorkspaceOpen(arg1) {
   return window['go']['main']['App']['WorkspaceOpen'](arg1);
 }
 
+export function WorkspacePageImages(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WorkspacePageImages'](arg1, arg2, arg3);
+}
+
+export function WorkspacePageText(arg1, arg2) {
+  return window['go']['main']['App']['WorkspacePageText'](arg1, arg2);
+}
+
 export function WorkspaceSetDirty(arg1) {
   return window['go']['main']['App']['WorkspaceSetDirty'](arg1);
 }

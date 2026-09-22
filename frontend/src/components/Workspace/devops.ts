@@ -22,6 +22,7 @@
  */
 
 import { displayRectToPageRect, parseRange, type NormRect, type WSItem } from "./model";
+import { WorkspacePageImages } from "../../../wailsjs/go/main/App";
 
 /** 把 "1,3-5" 这样的位置表达式翻译成当前清单里的 id。 */
 function positionsToIds(seq: WSItem[], spec: string): string[] {
@@ -141,6 +142,26 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
             case "viewmode": {
                 store.setViewMode(arg === "dual" ? "dual" : "single");
                 log.push(`viewmode:${store.viewMode}`);
+                break;
+            }
+            // extractimg:<目录> —— 直接给目录，绕开原生选择对话框，便于自动验证
+            case "extractimg": {
+                const it = store.currentItem;
+                if (!it || it.kind !== "page") {
+                    log.push("extractimg: 当前不是内容页");
+                    break;
+                }
+                try {
+                    const out = await WorkspacePageImages(it.docId, it.pageIndex, arg);
+                    log.push(`extractimg -> ${out}`);
+                } catch (e: any) {
+                    log.push(`extractimg 失败: ${e?.message ?? e}`);
+                }
+                break;
+            }
+            case "textdlg": {
+                await ui?.openText?.();
+                log.push("textdlg");
                 break;
             }
             case "shortcutdlg": {

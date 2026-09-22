@@ -444,6 +444,77 @@ func copyFile(src, dst string) error {
 }
 
 // ---------------------------------------------------------------------------
+// 提取当前页文本 / 图片（Phase 5 收尾）
+// ---------------------------------------------------------------------------
+
+// wsSourceFor 取出某个来源并校验页号。
+func (a *App) wsSourceFor(docID string, pageIndex int) (WSDocInfo, error) {
+	wsInit()
+	wsMu.Lock()
+	info, ok := wsDocs[docID]
+	wsMu.Unlock()
+	if !ok {
+		return info, errors.New("页面来源已失效，请重新打开文档")
+	}
+	if pageIndex < 0 || pageIndex >= info.PageCount {
+		return info, errors.New("页码超出范围")
+	}
+	return info, nil
+}
+
+// WorkspacePageText 提取某一页的文本并直接返回，供界面预览。
+//
+// 复用已有的 extract 命令，只是把产物写进工作区缓存目录后再读回来——
+// 因此不需要新增 Python 命令。目录按 docID 分开，避免两份文档的同号页互相覆盖。
+func (a *App) WorkspacePageText(docID string, pageIndex int) (string, error) {
+	info, err := a.wsSourceFor(docID, pageIndex)
+	if err != nil {
+		return "", err
+	}
+
+	dir := filepath.Join(wsCacheRoot, "text", docID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", errors.Wrap(err, "创建临时目录失败")
+	}
+
+	pageNo := pageIndex + 1
+	outFile := filepath.Join(dir, fmt.Sprintf("%d.txt", pageNo))
+	// 先删掉旧结果：命令失败时若还留着上一次的文本，会给出错误的内容
+	_ = os.Remove(outFile)
+
+	if err := a.ExtractTextFromPDF(info.Path, dir, fmt.Sprintf("%d", pageNo)); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		return "", errors.Wrap(err, "读取提取结果失败（该页可能没有可提取的文本）")
+	}
+	return string(data), nil
+}
+
+// WorkspacePageImages 把某一页里的图片导出到指定目录，返回该目录。
+func (a *App) WorkspacePageImages(docID string, pageIndex int, outDir string) (string, error) {
+	info, err := a.wsSourceFor(docID, pageIndex)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(outDir) == "" {
+		return "", errors.New("请先选择导出目录")
+	}
+	if !filepath.IsAbs(outDir) {
+		return "", errors.New("导出目录必须是绝对路径")
+	}
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return "", errors.Wrap(err, "创建导出目录失败")
+	}
+	if err := a.ExtractImageFromPDF(info.Path, outDir, fmt.Sprintf("%d", pageIndex+1)); err != nil {
+		return "", err
+	}
+	logger.Printf("工作区提取图片: %s 第 %d 页 -> %s\n", info.Path, pageIndex+1, outDir)
+	return outDir, nil
+}
+
+// ---------------------------------------------------------------------------
 // 未保存状态
 // ---------------------------------------------------------------------------
 

@@ -144,6 +144,10 @@ export function WorkspaceCacheRoot():Promise<string>;
 
 export function WorkspaceOpen(arg1:string):Promise<main.WSDocInfo>;
 
+export function WorkspacePageImages(arg1:string,arg2:number,arg3:string):Promise<string>;
+
+export function WorkspacePageText(arg1:string,arg2:number):Promise<string>;
+
 export function WorkspaceSetDirty(arg1:boolean):Promise<void>;
 
 export function WorkspaceThumbs(arg1:string,arg2:string,arg3:number):Promise<Array<main.WSThumb>>;
