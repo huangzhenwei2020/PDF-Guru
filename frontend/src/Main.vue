@@ -3,6 +3,12 @@
         <a-col :span="4">
             <a-menu v-model:selectedKeys="store.selectedKeys" :open-keys="store.openKeys" style="width: 180px"
                 @openChange="store.onOpenChange" mode="inline">
+                <a-menu-item key="workspace">
+                    <template #icon>
+                        <profile-outlined />
+                    </template>
+                    {{ menuRecord['workspace'] }}
+                </a-menu-item>
                 <a-menu-item key="index">
                     <template #icon>
                         <home-outlined />
@@ -188,16 +194,19 @@
         </a-col>
         <a-col :span="20">
             <div>
-                <div style="margin-right: 5vw;margin-top: 0.5em;" v-if="store.selectedKeys.at(0) !== 'index'">
+                <!-- 工作区是整屏编辑器，不占用标题区 -->
+                <div style="margin-right: 5vw;margin-top: 0.5em;" v-if="store.selectedKeys.at(0) === 'index'">
+                    <a-typography-title>工具箱</a-typography-title>
+                </div>
+                <div style="margin-right: 5vw;margin-top: 0.5em;"
+                    v-else-if="store.selectedKeys.at(0) !== 'workspace'">
                     <a-typography-title>{{ menuRecord[store.selectedKeys.at(0) || "merge"] }}</a-typography-title>
                     <a-typography-paragraph>
                         <blockquote>功能说明：{{ menuDesc[store.selectedKeys.at(0) || "merge"] }}</blockquote>
                     </a-typography-paragraph>
                 </div>
-                <div style="margin-right: 5vw;margin-top: 0.5em;" v-else>
-                    <a-typography-title>功能列表</a-typography-title>
-                </div>
                 <div>
+                    <Workspace v-if="store.selectedKeys.at(0) === 'workspace'" />
                     <Index v-if="store.selectedKeys.at(0) === 'index'" />
                     <MergeForm v-if="store.selectedKeys.at(0) === 'merge'" />
                     <SplitForm v-if="store.selectedKeys.at(0) === 'split'" />
@@ -274,6 +283,7 @@ import {
     EditOutlined,
     StarOutlined,
     MessageOutlined,
+    ProfileOutlined,
     createFromIconfontCN,
 } from '@ant-design/icons-vue';
 
@@ -305,6 +315,7 @@ import Index from "./components/Forms/Index.vue";
 import SignForm from "./components/Forms/SignForm.vue";
 import AnnotForm from "./components/Forms/AnnotForm.vue";
 import Debug from "./components/Forms/Debug.vue";
+import Workspace from "./components/Workspace/Workspace.vue";
 import { useMenuState } from './store/menu';
 
 const IconFont = createFromIconfontCN({ scriptUrl: '//at.alicdn.com/t/font_8d5l8fzk5b87iudi.js' });
@@ -409,6 +420,8 @@ export default defineComponent({
         AnnotForm,
         // 调试
         Debug,
+        // 工作区（PPT 式页面编辑器）
+        Workspace,
     },
     setup() {
         const store = useMenuState();

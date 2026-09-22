@@ -262,6 +262,22 @@ export function WatermarkPDFByText(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg
   return window['go']['main']['App']['WatermarkPDFByText'](arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16);
 }
 
+export function WorkspaceAutoOpenPath() {
+  return window['go']['main']['App']['WorkspaceAutoOpenPath']();
+}
+
+export function WorkspaceCacheRoot() {
+  return window['go']['main']['App']['WorkspaceCacheRoot']();
+}
+
+export function WorkspaceOpen(arg1) {
+  return window['go']['main']['App']['WorkspaceOpen'](arg1);
+}
+
+export function WorkspaceThumbs(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WorkspaceThumbs'](arg1, arg2, arg3);
+}
+
 export function WriteBookmarkByFile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['WriteBookmarkByFile'](arg1, arg2, arg3, arg4);
 }

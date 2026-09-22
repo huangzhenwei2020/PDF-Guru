@@ -1,0 +1,10 @@
+# 构建工具会把这些文件重写成 CRLF，而仓库里存的是 LF，
+# 于是每次构建都冒出一堆"假 diff"（内容零变化，只是行尾不同）。
+# 标记为文本后，git 在比较时会统一行尾，diff 只反映真实改动。
+#
+# 受影响来源：
+#   go.mod / go.sum            —— go mod tidy、wails build
+#   frontend/wailsjs/**        —— wails build 生成绑定与运行时
+go.mod text
+go.sum text
+frontend/wailsjs/** text

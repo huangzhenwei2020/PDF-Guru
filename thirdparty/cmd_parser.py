@@ -373,4 +373,20 @@ def getParser():
     anki_parser.add_argument("--image-mode", action="store_true", help="开启图片模式")
     anki_parser.add_argument("--page_range", type=str, default="all", help="页码范围")
     anki_parser.add_argument("--output", type=str, help="输出文件路径")
+
+    # ---- 工作区（PPT 式页面编辑器）所需的底层原语 ----
+    # ws-info: 导出文档结构，供前端建立页面模型
+    ws_info_parser = sub_parsers.add_parser("ws-info", help="工作区: 读取文档结构")
+    ws_info_parser.set_defaults(which="ws_info")
+    ws_info_parser.add_argument("input_path", type=str, help="pdf文件路径")
+    ws_info_parser.add_argument("-o", "--output", type=str, required=True, help="结构信息 JSON 输出路径")
+
+    # ws-render: 批量渲染缩略图（必须批量，逐页调用会因进程冷启动而卡死）
+    ws_render_parser = sub_parsers.add_parser("ws-render", help="工作区: 批量渲染页面缩略图")
+    ws_render_parser.set_defaults(which="ws_render")
+    ws_render_parser.add_argument("input_path", type=str, help="pdf文件路径")
+    ws_render_parser.add_argument("--pages", type=str, default="all", help="页码范围, 如 1-20 或 all")
+    ws_render_parser.add_argument("--width", type=int, default=160, help="缩略图宽度(px)")
+    ws_render_parser.add_argument("-o", "--output", type=str, required=True, help="缩略图输出目录")
+
     return parser

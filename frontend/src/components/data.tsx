@@ -359,7 +359,8 @@ interface IndexState{
 }
 
 const menuRecord: Record<string, string> = {
-    "index": "首页",
+    "workspace": "工作区",
+    "index": "工具箱",
     "merge": "PDF合并",
     "split": "PDF拆分",
     "delete": "PDF删除",

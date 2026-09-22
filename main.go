@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -81,6 +82,10 @@ func main() {
 		MinHeight: 600,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
+			// 工作区需要把本地文件喂给 webview（缩略图、页面预览）。
+			// Wails 的 AssetServer 在 Assets 未命中时会带着原始 URL 回落到这里，
+			// 所以不影响内嵌前端的静态资源。
+			Handler: http.HandlerFunc(serveWorkspaceFile),
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,

@@ -132,6 +132,14 @@ export function WatermarkPDFByPDF(arg1:string,arg2:string,arg3:string,arg4:strin
 
 export function WatermarkPDFByText(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:string,arg7:number,arg8:number,arg9:number,arg10:number,arg11:number,arg12:number,arg13:number,arg14:boolean,arg15:string,arg16:string):Promise<void>;
 
+export function WorkspaceAutoOpenPath():Promise<string>;
+
+export function WorkspaceCacheRoot():Promise<string>;
+
+export function WorkspaceOpen(arg1:string):Promise<main.WSDocInfo>;
+
+export function WorkspaceThumbs(arg1:string,arg2:string,arg3:number):Promise<Array<main.WSThumb>>;
+
 export function WriteBookmarkByFile(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
 export function WriteBookmarkByGap(arg1:string,arg2:string,arg3:number,arg4:string,arg5:number,arg6:string):Promise<void>;
