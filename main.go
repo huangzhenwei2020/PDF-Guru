@@ -88,8 +88,13 @@ func main() {
 			Handler: http.HandlerFunc(serveWorkspaceFile),
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
-		OnBeforeClose:    app.onBeforeClose,
+		// 允许把 PDF 拖进窗口打开。Wails 会把拖入文件的**绝对路径**回调给我们
+		// （WebView2 自身的 File 对象拿不到真实路径，所以必须由运行时提供）。
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop: true,
+		},
+		OnStartup:     app.startup,
+		OnBeforeClose: app.onBeforeClose,
 		Bind: []interface{}{
 			app,
 		},

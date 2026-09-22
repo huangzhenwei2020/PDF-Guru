@@ -207,7 +207,11 @@
                 </div>
 
                 <div v-else class="ws-hint">
-                    {{ store.seq.length ? "选择左侧任意一页查看大图" : "打开一个 PDF 开始" }}
+                    <template v-if="store.seq.length">选择左侧任意一页查看大图</template>
+                    <template v-else>
+                        把 PDF 拖进窗口即可打开<br />
+                        <small class="ws-hint-sub">也可以点左上角「打开 PDF」；拖入多个会合并成一份</small>
+                    </template>
                 </div>
             </div>
         </div>
@@ -449,15 +453,8 @@ import {
     SaveOutlined,
     UndoOutlined,
 } from '@ant-design/icons-vue';
-import {
-    SelectFile,
-    SelectMultipleFiles,
-    SelectDir,
-    SaveFile,
-    SetClipboard,
-    WorkspacePageText,
-    WorkspacePageImages,
-} from '../../../wailsjs/go/main/App';
+import { SelectFile, SelectMultipleFiles, SelectDir, SaveFile, SetClipboard, WorkspacePageText, WorkspacePageImages } from '../../../wailsjs/go/main/App';
+import { EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
@@ -1043,6 +1040,29 @@ export default defineComponent({
             }
         };
 
+        /**
+         * 把拖进窗口的 PDF 打开。拖入多个时，第一个作为工作区内容、
+         * 其余追加为来源——这恰好就是"把几份 PDF 合成一份"的自然操作。
+         */
+        const openDropped = async (paths: string[]) => {
+            if (!paths || !paths.length) return;
+            try {
+                imgFailed.value = false;
+                urlMode.value = 'relative';
+                await store.open(paths[0]);
+                for (let i = 1; i < paths.length; i++) {
+                    const docId = await store.registerSource(paths[i]);
+                    store.appendSource(docId);
+                }
+                if (paths.length > 1) {
+                    message.success(`已合并 ${paths.length} 个 PDF`);
+                }
+                if (store.error) message.error(store.error);
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
         // --- 其它交互 -----------------------------------------------------
 
         const onNeedThumbs = (ids: string[]) => {
@@ -1112,6 +1132,10 @@ export default defineComponent({
         onMounted(async () => {
             store.loadCacheRoot();
             window.addEventListener('keydown', onKey);
+            // 拖拽文件到窗口：Go 侧过滤出 PDF 后把路径发过来
+            EventsOn('workspace:open', (paths: string[]) => {
+                openDropped(paths);
+            });
             if (canvasRef.value && typeof ResizeObserver !== 'undefined') {
                 ro = new ResizeObserver(() => {
                     const el = canvasRef.value;
@@ -1152,6 +1176,7 @@ export default defineComponent({
 
         onUnmounted(() => {
             window.removeEventListener('keydown', onKey);
+            EventsOff('workspace:open');
             if (ro) ro.disconnect();
         });
 
@@ -1427,6 +1452,11 @@ export default defineComponent({
     text-align: center;
     padding: 20px 8px;
     line-height: 1.8;
+}
+
+.ws-hint-sub {
+    color: #bbb;
+    font-size: 12px;
 }
 
 .ws-note {
