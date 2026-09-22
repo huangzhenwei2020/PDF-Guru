@@ -127,8 +127,8 @@
 
         <!-- 主体：左轨道 + 右画布 -->
         <div class="ws-body">
-            <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" @select="onSelect"
-                @move="onMove" @need="onNeedThumbs" />
+            <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" :width="store.thumbWidth"
+                @select="onSelect" @move="onMove" @need="onNeedThumbs" />
 
             <div ref="canvasRef" class="ws-canvas">
                 <!-- 页面内容工具：裁剪/遮盖靠在这块区域上拖框完成 -->
@@ -138,6 +138,14 @@
                         <a-radio-button value="crop">裁剪</a-radio-button>
                         <a-radio-button value="mask">遮盖</a-radio-button>
                     </a-radio-group>
+                    <a-radio-group :value="store.viewMode" size="small" button-style="solid"
+                        @update:value="onViewModeChange">
+                        <a-radio-button value="single">单页</a-radio-button>
+                        <a-radio-button value="dual">双页</a-radio-button>
+                    </a-radio-group>
+                    <a-select :value="store.thumbWidth" size="small" style="width: 96px" :options="thumbSizeOptions"
+                        @update:value="onThumbWidthChange" />
+                    <a-button size="small" @click="shortcutVisible = true">快捷键</a-button>
                     <template v-if="mode === 'mask'">
                         <a-input v-model:value="maskColor" size="small" style="width: 84px" title="遮盖颜色" />
                         <a-input-number v-model:value="maskOpacity" size="small" :min="0.1" :max="1" :step="0.1"
@@ -153,39 +161,47 @@
                     </span>
                 </div>
 
-                <div v-if="store.previewLoading" class="ws-hint">渲染中…</div>
+                <div v-if="store.previewLoading && !views.length" class="ws-hint">渲染中…</div>
 
-                <!-- 空白页 -->
-                <div v-else-if="view && view.blank" class="ws-blank">
-                    <file-outlined />
-                    <div>空白页</div>
-                    <small>{{ blankLabel }}</small>
-                </div>
+                <!-- 页面预览。单页视图一列，双页视图并排两列；
+                     两列共用同一个缩放比例，看起来才整齐。
+                     旋转与缩放分层处理，每层只做一件事，避免多个 transform 揉在一起。 -->
+                <div v-else-if="views.length" class="pv-row" :class="{ 'pv-draw': mode !== 'view' }">
+                    <div v-for="(v, vi) in views" :key="v.item.id" :ref="(el) => setBoxRef(el, vi)" class="pv-fit"
+                        :style="{ width: v.fitW + 'px', height: v.fitH + 'px' }"
+                        @pointerdown="vi === 0 ? onCanvasDown($event) : undefined">
 
-                <!-- 页面预览：旋转与缩放分层处理，每层只做一件事，
-                     避免多个 transform 揉在一起后难以推理 -->
-                <div v-else-if="view" ref="canvasBoxRef" class="pv-fit"
-                    :class="{ 'pv-draw': mode !== 'view' }"
-                    :style="{ width: view.fitW + 'px', height: view.fitH + 'px' }"
-                    @pointerdown="onCanvasDown">
-                    <div class="pv-box" :style="{
-                        width: view.dispW + 'px',
-                        height: view.dispH + 'px',
-                        transform: `scale(${view.scale})`,
-                    }">
-                        <img :src="url(store.preview!.url)" :style="{
-                            width: view.imgW + 'px',
-                            height: view.imgH + 'px',
-                            transform: `translate(-50%, -50%) rotate(${view.rot}deg)`,
-                        }" alt="" @error="onImgError" />
+                        <div v-if="v.blank" class="ws-blank">
+                            <file-outlined />
+                            <div>空白页</div>
+                            <small>{{ v.item.paper }} · {{ v.item.orientation === 'landscape' ? '横向' : '纵向' }}</small>
+                        </div>
+
+                        <div v-else-if="v.pending" class="ws-hint">渲染中…</div>
+
+                        <template v-else>
+                            <div class="pv-box" :style="{
+                                width: v.dispW + 'px',
+                                height: v.dispH + 'px',
+                                transform: `scale(${v.scale})`,
+                            }">
+                                <img :src="v.url" :style="{
+                                    width: v.imgW + 'px',
+                                    height: v.imgH + 'px',
+                                    transform: `translate(-50%, -50%) rotate(${v.rot}deg)`,
+                                }" alt="" @error="onImgError" />
+                            </div>
+
+                            <!-- 操作回显与框选只画在当前页（第一格）上 -->
+                            <template v-if="vi === 0">
+                                <!-- 坐标已从页面空间换算到显示空间，页面旋转后框仍落在正确位置 -->
+                                <div v-if="overlay.crop" class="ov-crop" :style="pctStyle(overlay.crop)"></div>
+                                <div v-for="(m, i) in overlay.masks" :key="i" class="ov-mask"
+                                    :style="Object.assign(pctStyle(m.rect), { background: m.color, opacity: m.opacity })"></div>
+                                <div v-if="dragRect" class="ov-drag" :style="pctStyle(dragRect)"></div>
+                            </template>
+                        </template>
                     </div>
-
-                    <!-- 已有操作的回显。坐标已从页面空间换算到显示空间，
-                         因此页面旋转后框仍会落在正确的位置。 -->
-                    <div v-if="overlay.crop" class="ov-crop" :style="pctStyle(overlay.crop)"></div>
-                    <div v-for="(m, i) in overlay.masks" :key="i" class="ov-mask"
-                        :style="Object.assign(pctStyle(m.rect), { background: m.color, opacity: m.opacity })"></div>
-                    <div v-if="dragRect" class="ov-drag" :style="pctStyle(dragRect)"></div>
                 </div>
 
                 <div v-else class="ws-hint">
@@ -375,6 +391,13 @@
                 </div>
             </div>
         </a-modal>
+        <!-- 快捷键面板 -->
+        <a-modal v-model:visible="shortcutVisible" title="快捷键与操作" :footer="null" :width="520">
+            <div v-for="(s, i) in shortcuts" :key="i" class="sc-row">
+                <span class="sc-key">{{ s[0] }}</span>
+                <span class="sc-desc">{{ s[1] }}</span>
+            </div>
+        </a-modal>
     </div>
 </template>
 
@@ -457,12 +480,10 @@ export default defineComponent({
 
         /** 缩略图尚未渲染时，用源页尺寸先占好位置，避免图片到达时布局跳动 */
         const placeholderSize = (item: any) => {
+            const w = store.thumbWidth;
             const info = item.kind === 'page' ? store.pageInfoOf(item) : null;
-            if (!info || !info.width) return { w: 150, h: 212 };
-            return {
-                w: WS_THUMB_WIDTH,
-                h: Math.max(24, Math.round((WS_THUMB_WIDTH * info.height) / info.width)),
-            };
+            if (!info || !info.width) return { w, h: Math.round(w * 1.414) };
+            return { w, h: Math.max(24, Math.round((w * info.height) / info.width)) };
         };
 
         const rows = computed<RailRow[]>(() =>
@@ -514,34 +535,94 @@ export default defineComponent({
         const canvasH = ref(500);
         let ro: ResizeObserver | null = null;
 
-        const view = computed(() => {
-            const item = store.currentItem;
-            if (!item) return null;
-            if (item.kind === 'blank') {
-                return { blank: true } as any;
+        /**
+         * 画布上要显示的页。单页视图一列，双页视图两列。
+         * 两列共用同一个缩放比例，否则两页大小不一，看起来像出错。
+         */
+        const views = computed(() => {
+            const start = store.currentPos;
+            if (start < 0) return [];
+            const idxs = store.viewMode === 'dual' ? [start, start + 1] : [start];
+            const raw: any[] = [];
+
+            for (let k = 0; k < idxs.length; k++) {
+                const item = store.seq[idxs[k]];
+                if (!item) continue;
+                const rot = item.kind === 'page' ? item.rotation || 0 : 0;
+                const rot90 = rot === 90 || rot === 270;
+
+                if (item.kind === 'blank') {
+                    // 空白页没有可渲染的内容，按 A4 竖版的名义尺寸占位
+                    raw.push({ item, blank: true, dispW: 595, dispH: 842 });
+                    continue;
+                }
+
+                const p = k === 0 ? store.preview : store.previewB;
+                if (!p) {
+                    raw.push({ item, blank: false, pending: true, dispW: rot90 ? 842 : 595, dispH: rot90 ? 595 : 842 });
+                    continue;
+                }
+                raw.push({
+                    item,
+                    blank: false,
+                    pending: false,
+                    url: url(p.url),
+                    imgW: p.width,
+                    imgH: p.height,
+                    rot,
+                    // 旋转 90/270 后显示尺寸要交换
+                    dispW: rot90 ? p.height : p.width,
+                    dispH: rot90 ? p.width : p.height,
+                });
             }
-            const p = store.preview;
-            if (!p) return null;
-            const rot = item.rotation || 0;
-            const rot90 = rot === 90 || rot === 270;
-            // 旋转 90/270 后，显示尺寸要交换
-            const dispW = rot90 ? p.height : p.width;
-            const dispH = rot90 ? p.width : p.height;
-            const availW = Math.max(120, canvasW.value - 26);
-            const availH = Math.max(120, canvasH.value - 26);
-            const scale = Math.min(1, availW / dispW, availH / dispH);
-            return {
-                blank: false,
-                imgW: p.width,
-                imgH: p.height,
-                rot,
-                dispW,
-                dispH,
+            if (!raw.length) return [];
+
+            const n = raw.length;
+            const gap = n > 1 ? 16 : 0;
+            const availW = Math.max(120, canvasW.value - 30 - gap);
+            const availH = Math.max(120, canvasH.value - 30);
+            const perPageW = availW / n;
+            let scale = 1;
+            for (const v of raw) {
+                scale = Math.min(scale, perPageW / v.dispW, availH / v.dispH);
+            }
+            return raw.map((v) => ({
+                ...v,
                 scale,
-                fitW: Math.round(dispW * scale),
-                fitH: Math.round(dispH * scale),
-            };
+                fitW: Math.round(v.dispW * scale),
+                fitH: Math.round(v.dispH * scale),
+            }));
         });
+
+        /** 只有第一格（当前页）参与裁剪/遮盖的框选 */
+        const setBoxRef = (el: any, vi: number) => {
+            if (vi === 0) canvasBoxRef.value = (el as HTMLElement) ?? null;
+        };
+
+        // --- 视图偏好与快捷键面板 -----------------------------------------
+
+        const thumbSizeOptions = [
+            { value: 110, label: '小图' },
+            { value: 150, label: '中图' },
+            { value: 210, label: '大图' },
+        ];
+        // 模板里不能写带类型标注的箭头函数（模板编译器用的是 JS 解析器），
+        // 因此这类回调统一在 setup 里定义
+        const onViewModeChange = (v: any) => store.setViewMode(v);
+        const onThumbWidthChange = (v: any) => store.setThumbWidth(v);
+
+        const shortcutVisible = ref(false);
+        const shortcuts: [string, string][] = [
+            ['拖动缩略图', '调整页面顺序（拖动选区中任意一项即拖动整组）'],
+            ['单击 / Ctrl 单击 / Shift 单击', '单选 / 多选 / 范围选择'],
+            ['Ctrl + A', '全选'],
+            ['Ctrl + D', '复制所选页面'],
+            ['Delete', '删除所选页面'],
+            ['[ / ]', '逆时针 / 顺时针旋转 90°'],
+            ['Ctrl + Z / Ctrl + Shift + Z', '撤销 / 重做'],
+            ['Ctrl + S', '保存（覆盖主来源文件，先自动备份 .bak）'],
+            ['Ctrl + Shift + S', '导出为新的 PDF'],
+        ];
 
         // --- 裁剪 / 遮盖的框选交互 ----------------------------------------
 
@@ -927,6 +1008,9 @@ export default defineComponent({
                             openDecor: () => {
                                 decorVisible.value = true;
                             },
+                            openShortcuts: () => {
+                                shortcutVisible.value = true;
+                            },
                         });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
@@ -954,7 +1038,13 @@ export default defineComponent({
             canEdit,
             blankLabel,
             previewPage,
-            view,
+            views,
+            setBoxRef,
+            thumbSizeOptions,
+            onViewModeChange,
+            onThumbWidthChange,
+            shortcutVisible,
+            shortcuts,
             canvasRef,
             // 裁剪 / 遮盖
             mode,
@@ -1075,9 +1165,36 @@ export default defineComponent({
 }
 
 /* 外层只负责占位（已缩放的尺寸），内层负责缩放，图片负责旋转 */
+.pv-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+}
+
 .pv-fit {
     position: relative;
     overflow: hidden;
+}
+
+/* 快捷键面板 */
+.sc-row {
+    display: flex;
+    gap: 12px;
+    padding: 5px 0;
+    border-bottom: 1px solid #f5f5f5;
+}
+
+.sc-key {
+    flex: 0 0 200px;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12px;
+    color: #1677ff;
+}
+
+.sc-desc {
+    font-size: 13px;
+    color: #555;
 }
 
 .pv-draw {

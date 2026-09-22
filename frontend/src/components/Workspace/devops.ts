@@ -132,6 +132,22 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 log.push("rmannot");
                 break;
             }
+            // --- 视图偏好（Phase 6）---
+            case "thumb": {
+                store.setThumbWidth(parseInt(arg, 10) || 150);
+                log.push(`thumb:${store.thumbWidth}`);
+                break;
+            }
+            case "viewmode": {
+                store.setViewMode(arg === "dual" ? "dual" : "single");
+                log.push(`viewmode:${store.viewMode}`);
+                break;
+            }
+            case "shortcutdlg": {
+                ui?.openShortcuts?.();
+                log.push("shortcutdlg");
+                break;
+            }
             case "decordlg": {
                 ui?.openDecor?.();
                 log.push("decordlg");

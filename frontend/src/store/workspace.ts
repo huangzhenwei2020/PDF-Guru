@@ -75,6 +75,9 @@ const SRC_COLORS = ["#1677ff", "#52c41a", "#fa8c16", "#eb2f96", "#722ed1", "#13c
 const inflightThumbs = new Set<string>();
 const inflightPreviews = new Map<string, Promise<WSThumb | null>>();
 
+/** 聚焦代号：用来丢弃"加载完时用户已经切走"的迟到结果 */
+let focusGen = 0;
+
 export const WS_THUMB_WIDTH = THUMB_WIDTH;
 export const WS_PREVIEW_WIDTH = PREVIEW_WIDTH;
 
@@ -180,6 +183,12 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         /** 大图缓存，key 同 thumbs。聚焦同一页时不再重复渲染 */
         previewCache: {} as Record<string, WSThumb>,
         preview: null as WSThumb | null,
+        /** 双页视图时右侧那一页的大图 */
+        previewB: null as WSThumb | null,
+        /** 缩略图宽度。视图偏好，刻意不计入"未保存"判定 */
+        thumbWidth: 150,
+        /** 画布视图：单页 / 双页。同样是视图偏好 */
+        viewMode: "single" as "single" | "dual",
         /** 撤销 / 重做栈，存的是清单快照 */
         past: [] as WSItem[][],
         future: [] as WSItem[][],
@@ -264,7 +273,31 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
 
     actions: {
         thumbKey(docId: string, pageIndex: number): string {
-            return `${docId}:${pageIndex}`;
+            // 宽度进 key：换尺寸后旧图不会与新图混淆，各自独立缓存
+            return `${docId}:${pageIndex}@${this.thumbWidth}`;
+        },
+
+        /** 大图固定用 900px 渲染，因此不带宽度 */
+        previewKey(docId: string, pageIndex: number): string {
+            return `pv:${docId}:${pageIndex}`;
+        },
+
+        /**
+         * 切换缩略图尺寸。缩略图按 (页, 宽度) 缓存，换宽度等于换一套图，
+         * 所以要清掉"已渲染"标记，让轨道按新尺寸重新按需渲染。
+         */
+        setThumbWidth(w: number) {
+            const next = Math.max(80, Math.min(320, Math.round(w)));
+            if (next === this.thumbWidth) return;
+            this.thumbWidth = next;
+            this.thumbs = {};
+            this.thumbAsked = {};
+        },
+
+        setViewMode(mode: "single" | "dual") {
+            if (mode === this.viewMode) return;
+            this.viewMode = mode;
+            if (this.current) this.focusItem(this.current);
         },
 
         /** 取某一项的缩略图（空白页没有缩略图，返回 null）。 */
@@ -419,55 +452,54 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             await this.ensureThumbsFor(allIds(this.seq));
         },
 
-        /** 聚焦到某一项并加载大图。 */
+        /** 取某一项的大图（带缓存与在途去重）。 */
+        async fetchPreview(item: WSItem): Promise<WSThumb | null> {
+            if (item.kind !== "page") return null;
+            const key = this.previewKey(item.docId, item.pageIndex);
+            const cached = this.previewCache[key];
+            if (cached) return cached;
+
+            let task = inflightPreviews.get(key);
+            if (!task) {
+                const docId = item.docId;
+                const pageNo = item.pageIndex + 1;
+                task = (async () => {
+                    const list: any = await WorkspaceThumbs(docId, String(pageNo), PREVIEW_WIDTH);
+                    return list && list.length ? (list[0] as WSThumb) : null;
+                })();
+                inflightPreviews.set(key, task);
+                // 用完即清（两个分支都处理，避免产生未处理的 rejection）
+                task.then(
+                    () => inflightPreviews.delete(key),
+                    () => inflightPreviews.delete(key)
+                );
+            }
+            const got = await task;
+            if (got) this.previewCache[key] = got;
+            return got;
+        },
+
+        /** 聚焦到某一项并加载大图（双页视图会连带加载右页）。 */
         async focusItem(id: string) {
             const i = indexOfId(this.seq, id);
             if (i < 0) return;
             this.current = id;
+            // 加载期间用户可能已经切到别的页，用一个代号识别"迟到的结果"
+            const gen = ++focusGen;
+
             const item = this.seq[i];
-
-            if (item.kind === "blank") {
-                // 空白页没有内容可渲染，界面显示占位
-                this.preview = null;
-                this.previewLoading = false;
-                return;
-            }
-
-            const key = this.thumbKey(item.docId, item.pageIndex);
-            const cached = this.previewCache[key];
-            if (cached) {
-                this.preview = cached;
-                this.previewLoading = false;
-                return;
-            }
-
-            this.previewLoading = true;
+            this.previewLoading = item.kind === "page";
             try {
-                let task = inflightPreviews.get(key);
-                if (!task) {
-                    const docId = item.docId;
-                    const pageNo = item.pageIndex + 1;
-                    task = (async () => {
-                        const list: any = await WorkspaceThumbs(docId, String(pageNo), PREVIEW_WIDTH);
-                        return list && list.length ? (list[0] as WSThumb) : null;
-                    })();
-                    inflightPreviews.set(key, task);
-                    // 用完即清（两个分支都处理，避免产生未处理的 rejection）
-                    task.then(
-                        () => inflightPreviews.delete(key),
-                        () => inflightPreviews.delete(key)
-                    );
-                }
-                const got = await task;
-                if (got) {
-                    this.previewCache[key] = got;
-                    // 聚焦已经切走时不要用迟到的结果覆盖当前画面
-                    if (this.current === id) this.preview = got;
-                }
+                const a = await this.fetchPreview(item);
+                const nb = this.viewMode === "dual" ? this.seq[i + 1] : null;
+                const b = nb ? await this.fetchPreview(nb) : null;
+                if (gen !== focusGen) return;
+                this.preview = a;
+                this.previewB = b;
             } catch (e: any) {
                 this.error = String(e?.message ?? e);
             } finally {
-                if (this.current === id) this.previewLoading = false;
+                if (gen === focusGen) this.previewLoading = false;
             }
         },
 

@@ -1,5 +1,6 @@
 <template>
-    <div ref="railEl" class="rail" :class="{ dragging }" @scroll="onScroll">
+    <div ref="railEl" class="rail" :class="{ dragging }" @scroll="onScroll"
+        :style="{ width: railWidth + 'px', flexBasis: railWidth + 'px' }">
         <div v-for="(row, i) in rows" :key="row.id" class="row" :data-index="i" :class="{
             sel: selectedSet.has(row.id),
             cur: row.id === current,
@@ -48,6 +49,8 @@ export default defineComponent({
         rows: { type: Array as PropType<RailRow[]>, required: true },
         selected: { type: Array as PropType<string[]>, default: () => [] },
         current: { type: String, default: '' },
+        /** 当前缩略图宽度。换尺寸后需要重置重试计数，否则换两次就不再补图了 */
+        width: { type: Number, default: 150 },
     },
     emits: ['select', 'move', 'need'],
     setup(props, { emit }) {
@@ -265,6 +268,18 @@ export default defineComponent({
             nextTick(observeAll);
         });
 
+        // 缩略图尺寸变化：整套图都要按新宽度重渲染，重试计数必须重置
+        watch(
+            () => props.width,
+            () => {
+                for (const k of Object.keys(attempts)) delete attempts[k];
+                nextTick(() => {
+                    const ids = props.rows.filter((r) => visible.has(r.id) && !r.loaded).map((r) => r.id);
+                    ids.forEach(queueNeed);
+                });
+            }
+        );
+
         // 若某次渲染没成功，行仍会停在"未加载"；这里对仍在视口内的行再试一次
         // （attempts 上限保证不会无限重试）
         watch(loadedSignature, () => {
@@ -273,6 +288,10 @@ export default defineComponent({
         });
 
         const isRot90 = (r: number) => r === 90 || r === 270;
+
+        // 轨道宽度跟着缩略图尺寸走：写死宽度会让"大图"被裁掉右边。
+        // 34 = 轨道内边距 20 + 行内边距 8 + 行边框 4 + 留一点给滚动条
+        const railWidth = computed(() => props.width + 34);
 
         /** 容器尺寸 = 旋转之后的显示尺寸 */
         const boxStyle = (row: RailRow) => {
@@ -290,6 +309,7 @@ export default defineComponent({
 
         return {
             railEl,
+            railWidth,
             selectedSet,
             dragSet,
             dragging,
@@ -311,9 +331,10 @@ export default defineComponent({
 <style scoped>
 .rail {
     position: relative;
-    width: 200px;
-    flex: 0 0 200px;
+    /* 宽度由内联样式按缩略图尺寸给出 */
+    min-width: 140px;
     overflow-y: auto;
+    overflow-x: hidden;
     background: #fafafa;
     border-right: 1px solid #e8e8e8;
     padding: 10px;
