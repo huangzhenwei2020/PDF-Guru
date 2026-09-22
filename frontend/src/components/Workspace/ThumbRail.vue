@@ -8,7 +8,8 @@
             'drop-before': dropIndex === i && !dropAfter,
             'drop-after': dropIndex === i && dropAfter,
             blank: row.kind === 'blank',
-        }" @pointerdown="onPointerDown(row, $event)" @click="onClick(row, $event)">
+        }" @pointerdown="onPointerDown(row, $event)" @click="onClick(row, $event)"
+            @contextmenu.prevent="onContextMenu(row, $event)">
             <div class="box" :style="boxStyle(row)">
                 <img v-if="row.url" :src="row.url" :style="imgStyle(row)" draggable="false" alt="" />
                 <div v-else-if="row.kind === 'blank'" class="blankface">{{ row.paper || "空白页" }}</div>
@@ -52,7 +53,7 @@ export default defineComponent({
         /** 当前缩略图宽度。换尺寸后需要重置重试计数，否则换两次就不再补图了 */
         width: { type: Number, default: 150 },
     },
-    emits: ['select', 'move', 'need'],
+    emits: ['select', 'move', 'need', 'ctx'],
     setup(props, { emit }) {
         const railEl = ref<HTMLElement | null>(null);
 
@@ -195,6 +196,12 @@ export default defineComponent({
             emit('select', row.id, mode);
         };
 
+        /** 右键菜单：先保证该行被选中，再把坐标交给上层去弹菜单 */
+        const onContextMenu = (row: RailRow, e: MouseEvent) => {
+            if (!props.selected.includes(row.id)) emit('select', row.id, 'replace');
+            emit('ctx', row.id, e.clientX, e.clientY);
+        };
+
         // --- 按需渲染：只请求"看得见"的页 -----------------------------------
         //
         // 大文档性能的关键。若一次性渲染整份文档的缩略图，1000 页就是一次 python
@@ -320,6 +327,7 @@ export default defineComponent({
             ghostY,
             onPointerDown,
             onClick,
+            onContextMenu,
             onScroll,
             boxStyle,
             imgStyle,

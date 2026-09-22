@@ -128,7 +128,7 @@
         <!-- 主体：左轨道 + 右画布 -->
         <div class="ws-body">
             <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" :width="store.thumbWidth"
-                @select="onSelect" @move="onMove" @need="onNeedThumbs" />
+                @select="onSelect" @move="onMove" @need="onNeedThumbs" @ctx="onCtx" />
 
             <div ref="canvasRef" class="ws-canvas">
                 <!-- 页面内容工具：裁剪/遮盖靠在这块区域上拖框完成 -->
@@ -414,6 +414,20 @@
                 </div>
             </template>
         </a-modal>
+        <!-- 缩略图右键菜单：固定定位跟随鼠标，点别处即关闭 -->
+        <div v-if="ctxVisible" class="ctx-mask" @click="ctxVisible = false" @contextmenu.prevent="ctxVisible = false">
+            <a-menu class="ctx-menu" :style="{ left: ctxX + 'px', top: ctxY + 'px' }" @click="onCtxAction">
+                <a-menu-item key="dup">复制所选页面</a-menu-item>
+                <a-menu-item key="del">删除所选页面</a-menu-item>
+                <a-menu-divider />
+                <a-menu-item key="rot-">逆时针旋转 90°</a-menu-item>
+                <a-menu-item key="rot+">顺时针旋转 90°</a-menu-item>
+                <a-menu-divider />
+                <a-menu-item key="keep">仅保留所选页面</a-menu-item>
+                <a-menu-item key="clearops">清除裁剪 / 遮盖</a-menu-item>
+                <a-menu-item key="text">提取本页文本</a-menu-item>
+            </a-menu>
+        </div>
     </div>
 </template>
 
@@ -990,6 +1004,45 @@ export default defineComponent({
             }
         };
 
+        // --- 缩略图右键菜单 -----------------------------------------------
+
+        const ctxVisible = ref(false);
+        const ctxX = ref(0);
+        const ctxY = ref(0);
+
+        const onCtx = (_id: string, x: number, y: number) => {
+            ctxX.value = x;
+            ctxY.value = y;
+            ctxVisible.value = true;
+        };
+
+        const onCtxAction = ({ key }: { key: string }) => {
+            ctxVisible.value = false;
+            switch (key) {
+                case 'dup':
+                    store.doDuplicate();
+                    break;
+                case 'del':
+                    store.doDelete();
+                    break;
+                case 'rot-':
+                    store.doRotate(-90);
+                    break;
+                case 'rot+':
+                    store.doRotate(90);
+                    break;
+                case 'keep':
+                    store.keepOnlySelected();
+                    break;
+                case 'clearops':
+                    store.clearOpsOn();
+                    break;
+                case 'text':
+                    doExtractText();
+                    break;
+            }
+        };
+
         // --- 其它交互 -----------------------------------------------------
 
         const onNeedThumbs = (ids: string[]) => {
@@ -1085,6 +1138,7 @@ export default defineComponent({
                                 shortcutVisible.value = true;
                             },
                             openText: () => doExtractText(),
+                            openCtx: (x: number, y: number) => onCtx('', x, y),
                         });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
@@ -1126,6 +1180,12 @@ export default defineComponent({
             textVisible,
             textLoading,
             pageText,
+            // 右键菜单
+            ctxVisible,
+            ctxX,
+            ctxY,
+            onCtx,
+            onCtxAction,
             canvasRef,
             // 裁剪 / 遮盖
             mode,
@@ -1276,6 +1336,20 @@ export default defineComponent({
 .sc-desc {
     font-size: 13px;
     color: #555;
+}
+
+/* 右键菜单 */
+.ctx-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+}
+
+.ctx-menu {
+    position: fixed;
+    min-width: 176px;
+    border-radius: 6px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
 }
 
 .ws-textbox {

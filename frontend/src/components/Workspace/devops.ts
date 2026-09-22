@@ -159,6 +159,12 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 }
                 break;
             }
+            case "ctxmenu": {
+                const [x, y] = (arg || "360,300").split(",").map(Number);
+                ui?.openCtx?.(x, y);
+                log.push(`ctxmenu:${x},${y}`);
+                break;
+            }
             case "textdlg": {
                 await ui?.openText?.();
                 log.push("textdlg");
