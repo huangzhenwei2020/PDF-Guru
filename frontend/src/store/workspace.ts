@@ -353,7 +353,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 this.anchor = "";
                 this.current = this.seq.length ? this.seq[0].id : "";
 
-                await this.loadThumbs();
+                // 缩略图不在这里全量渲染：轨道的可见性观察会按需补齐，
+                // 否则打开 1000 页文档就要先画 1000 张图
                 if (this.current) {
                     await this.focusItem(this.current);
                 }
@@ -366,16 +367,24 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         },
 
         /**
-         * 只渲染清单里真正用到、且还没渲染过的缩略图。
-         * 这样"只插入 3 页"就不会白白渲染整个来源文档。
+         * 按需渲染缩略图 —— 大文档性能的关键。
+         *
+         * 只在轨道里"看得见"的那部分页被请求，滚动时再依次补齐。
+         * 若一次性渲染整份文档，1000 页就是一次 python 进程画 1000 张图，
+         * 既有几十秒的等待，也会白白占用磁盘与内存。
          */
-        async loadThumbs() {
+        async ensureThumbsFor(ids: string[]) {
             const need: Record<string, number[]> = {};
-            for (const it of this.seq) {
+            const seen = new Set<string>();
+            for (const id of ids) {
+                const i = indexOfId(this.seq, id);
+                if (i < 0) continue;
+                const it = this.seq[i];
                 if (it.kind !== "page") continue;
                 const key = this.thumbKey(it.docId, it.pageIndex);
                 // 已渲染过、或正在渲染中的都跳过（后者是并发的来源）
-                if (this.thumbAsked[key] || inflightThumbs.has(key)) continue;
+                if (this.thumbAsked[key] || inflightThumbs.has(key) || seen.has(key)) continue;
+                seen.add(key);
                 (need[it.docId] ||= []).push(it.pageIndex);
             }
 
@@ -403,6 +412,11 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                     for (const i of indices) inflightThumbs.delete(this.thumbKey(docId, i));
                 }
             }
+        },
+
+        /** 为整份清单按需渲染缩略图（一般不用直接调，轨道的可见性观察会驱动它）。 */
+        async loadThumbs() {
+            await this.ensureThumbsFor(allIds(this.seq));
         },
 
         /** 聚焦到某一项并加载大图。 */
@@ -552,7 +566,6 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 next,
                 items.map((it) => it.id)
             );
-            this.loadThumbs();
             if (items.length) this.focusItem(items[0].id);
         },
 
@@ -581,7 +594,6 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 next,
                 items.map((it) => it.id)
             );
-            this.loadThumbs();
             if (items.length) this.focusItem(items[0].id);
         },
 

@@ -128,7 +128,7 @@
         <!-- 主体：左轨道 + 右画布 -->
         <div class="ws-body">
             <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" @select="onSelect"
-                @move="onMove" />
+                @move="onMove" @need="onNeedThumbs" />
 
             <div ref="canvasRef" class="ws-canvas">
                 <!-- 页面内容工具：裁剪/遮盖靠在这块区域上拖框完成 -->
@@ -397,7 +397,7 @@ import {
     UndoOutlined,
 } from '@ant-design/icons-vue';
 import { SelectFile, SelectMultipleFiles, SaveFile } from '../../../wailsjs/go/main/App';
-import { useWorkspaceState } from '../../store/workspace';
+import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
     displayRectToPageRect,
@@ -455,10 +455,21 @@ export default defineComponent({
 
         // --- 缩略图轨道的数据 ---------------------------------------------
 
+        /** 缩略图尚未渲染时，用源页尺寸先占好位置，避免图片到达时布局跳动 */
+        const placeholderSize = (item: any) => {
+            const info = item.kind === 'page' ? store.pageInfoOf(item) : null;
+            if (!info || !info.width) return { w: 150, h: 212 };
+            return {
+                w: WS_THUMB_WIDTH,
+                h: Math.max(24, Math.round((WS_THUMB_WIDTH * info.height) / info.width)),
+            };
+        };
+
         const rows = computed<RailRow[]>(() =>
             store.seq.map((item, i) => {
                 const t = store.thumbOf(item);
                 const tag = store.sourceTag(item.kind === 'page' ? item.docId : '');
+                const ph = t ? null : placeholderSize(item);
                 return {
                     id: item.id,
                     kind: item.kind,
@@ -470,8 +481,9 @@ export default defineComponent({
                     srcPath: tag.path,
                     rotation: item.kind === 'page' ? item.rotation : 0,
                     url: t ? url(t.url) : '',
-                    w: t ? t.width : 150,
-                    h: t ? t.height : 212,
+                    loaded: !!t,
+                    w: t ? t.width : (ph as any).w,
+                    h: t ? t.height : (ph as any).h,
                     paper: item.kind === 'blank' ? item.paper : undefined,
                 };
             })
@@ -706,7 +718,6 @@ export default defineComponent({
                     if (!p) return;
                     const docId = await store.registerSource(p);
                     store.appendSource(docId);
-                    await store.loadThumbs();
                 } catch (e: any) {
                     fail(e);
                 }
@@ -718,7 +729,6 @@ export default defineComponent({
                     if (!ps || !ps.length) return;
                     const docId = await store.registerImageSource(ps);
                     store.appendSource(docId);
-                    await store.loadThumbs();
                 } catch (e: any) {
                     fail(e);
                 }
@@ -827,6 +837,11 @@ export default defineComponent({
         );
 
         // --- 其它交互 -----------------------------------------------------
+
+        const onNeedThumbs = (ids: string[]) => {
+            // 轨道只报告"看得见但还没图"的项，商店负责合并、去重、按来源批量渲染
+            store.ensureThumbsFor(ids);
+        };
 
         const onSelect = (id: string, mode: string) => {
             store.select(id, mode as any);
@@ -952,6 +967,7 @@ export default defineComponent({
             onCanvasDown,
             onSelect,
             onMove,
+            onNeedThumbs,
             pickFile,
             onInsertMenu,
             autoLog,

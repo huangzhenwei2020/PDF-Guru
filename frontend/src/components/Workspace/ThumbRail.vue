@@ -10,7 +10,9 @@
         }" @pointerdown="onPointerDown(row, $event)" @click="onClick(row, $event)">
             <div class="box" :style="boxStyle(row)">
                 <img v-if="row.url" :src="row.url" :style="imgStyle(row)" draggable="false" alt="" />
-                <div v-else class="blankface">{{ row.paper || "空白页" }}</div>
+                <div v-else-if="row.kind === 'blank'" class="blankface">{{ row.paper || "空白页" }}</div>
+                <!-- 尚未渲染：用同尺寸的浅灰占位，图片到达时不会引起布局跳动 -->
+                <div v-else class="loadingface"></div>
             </div>
             <span class="no">{{ row.label }}</span>
             <span v-if="row.srcLabel" class="src" :style="{ color: row.srcColor }" :title="row.srcPath">
@@ -28,7 +30,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, type PropType } from 'vue';
+import { defineComponent, ref, computed, onMounted, onUnmounted, watch, nextTick, type PropType } from 'vue';
 import type { RailRow } from './model';
 
 /**
@@ -47,7 +49,7 @@ export default defineComponent({
         selected: { type: Array as PropType<string[]>, default: () => [] },
         current: { type: String, default: '' },
     },
-    emits: ['select', 'move'],
+    emits: ['select', 'move', 'need'],
     setup(props, { emit }) {
         const railEl = ref<HTMLElement | null>(null);
 
@@ -190,6 +192,86 @@ export default defineComponent({
             emit('select', row.id, mode);
         };
 
+        // --- 按需渲染：只请求"看得见"的页 -----------------------------------
+        //
+        // 大文档性能的关键。若一次性渲染整份文档的缩略图，1000 页就是一次 python
+        // 进程画 1000 张图；这里只报告进入视口（含预取边距）的行，滚动时再补齐。
+        let observer: IntersectionObserver | null = null;
+        let pendingIds: string[] = [];
+        let flushTimer: number | null = null;
+        /** 当前在视口内的行，用于在渲染失败后重试 */
+        const visible = new Set<string>();
+        /** 每行的请求次数，避免失败后无限重试 */
+        const attempts: Record<string, number> = {};
+
+        const queueNeed = (id: string) => {
+            const n = (attempts[id] ?? 0) + 1;
+            if (n > 2) return;
+            attempts[id] = n;
+            if (!pendingIds.includes(id)) pendingIds.push(id);
+            if (flushTimer !== null) return;
+            // 一屏内十几行会几乎同时进入视口，合并成一次请求
+            flushTimer = window.setTimeout(() => {
+                flushTimer = null;
+                const ids = pendingIds;
+                pendingIds = [];
+                if (ids.length) emit('need', ids);
+            }, 40);
+        };
+
+        const idsSignature = computed(() => props.rows.map((r) => r.id).join(','));
+        const loadedSignature = computed(() => props.rows.map((r) => (r.loaded ? '1' : '0')).join(''));
+
+        const observeAll = () => {
+            if (!observer) return;
+            observer.disconnect();
+            visible.clear();
+            railEl.value?.querySelectorAll('.row').forEach((el) => observer!.observe(el));
+        };
+
+        onMounted(() => {
+            if (typeof IntersectionObserver === 'undefined') {
+                // 环境不支持时退化为"全部请求"，正确性优先
+                emit('need', props.rows.filter((r) => !r.loaded).map((r) => r.id));
+                return;
+            }
+            observer = new IntersectionObserver(
+                (entries) => {
+                    for (const e of entries) {
+                        const el = e.target as HTMLElement;
+                        const row = props.rows[Number(el.dataset.index)];
+                        if (!row) continue;
+                        if (e.isIntersecting) {
+                            visible.add(row.id);
+                            if (!row.loaded) queueNeed(row.id);
+                        } else {
+                            visible.delete(row.id);
+                        }
+                    }
+                },
+                // 预取边距：提前一屏多就开始渲染，滚动时基本看不到空位
+                { root: railEl.value, rootMargin: '700px 0px' }
+            );
+            observeAll();
+        });
+
+        onUnmounted(() => {
+            if (flushTimer !== null) window.clearTimeout(flushTimer);
+            observer?.disconnect();
+        });
+
+        // 清单增删/重排后元素被复用或替换，需要重新观察
+        watch(idsSignature, () => {
+            nextTick(observeAll);
+        });
+
+        // 若某次渲染没成功，行仍会停在"未加载"；这里对仍在视口内的行再试一次
+        // （attempts 上限保证不会无限重试）
+        watch(loadedSignature, () => {
+            const retry = props.rows.filter((r) => visible.has(r.id) && !r.loaded).map((r) => r.id);
+            retry.forEach(queueNeed);
+        });
+
         const isRot90 = (r: number) => r === 90 || r === 270;
 
         /** 容器尺寸 = 旋转之后的显示尺寸 */
@@ -312,6 +394,12 @@ export default defineComponent({
     color: #bbb;
     font-size: 12px;
     border: 1px dashed #ddd;
+}
+
+.loadingface {
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(45deg, #f5f5f5, #f5f5f5 6px, #ececec 6px, #ececec 12px);
 }
 
 .no {
