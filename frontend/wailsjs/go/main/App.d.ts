@@ -138,9 +138,13 @@ export function WorkspaceAutoOpenPath():Promise<string>;
 
 export function WorkspaceAutoOps():Promise<string>;
 
+export function WorkspaceBuild(arg1:string,arg2:string,arg3:boolean,arg4:boolean):Promise<string>;
+
 export function WorkspaceCacheRoot():Promise<string>;
 
 export function WorkspaceOpen(arg1:string):Promise<main.WSDocInfo>;
+
+export function WorkspaceSetDirty(arg1:boolean):Promise<void>;
 
 export function WorkspaceThumbs(arg1:string,arg2:string,arg3:number):Promise<Array<main.WSThumb>>;
 

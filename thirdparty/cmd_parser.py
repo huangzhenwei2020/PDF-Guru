@@ -391,4 +391,12 @@ def getParser():
     ws_render_parser.add_argument("--manifest", type=str, default=None,
                                   help="清单输出路径。并发调用必须各自指定，否则会互相覆盖")
 
+    # ws-build: 按清单合成 PDF（工作区所有编辑真正落盘的地方）
+    ws_build_parser = sub_parsers.add_parser("ws-build", help="工作区: 按清单合成 PDF")
+    ws_build_parser.set_defaults(which="ws_build")
+    ws_build_parser.add_argument("plan", type=str, help="清单 JSON 路径")
+    ws_build_parser.add_argument("-o", "--output", type=str, required=True, help="输出 PDF 路径")
+    ws_build_parser.add_argument("--compress", action="store_true",
+                                 help="更强的压缩（garbage=4 + clean，牺牲一点速度）")
+
     return parser

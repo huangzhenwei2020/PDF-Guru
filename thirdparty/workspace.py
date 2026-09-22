@@ -15,6 +15,7 @@
    清单文件则把实际像素尺寸告诉前端，避免图片加载时才撑开布局造成抖动。
 """
 
+import json
 import os
 import traceback
 from pathlib import Path
@@ -117,5 +118,78 @@ def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, man
         doc.close()
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
     except:
+        logger.error(traceback.format_exc())
+        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+
+
+def workspace_build(plan_path: str, output_path: str, compress: bool = False):
+    """按清单合成 PDF —— 工作区所有编辑真正落盘的地方。
+
+    清单由 Go 侧生成，其中：页码已经是 0-based 下标、docId 已经解析成真实文件路径。
+    Python 这边因此不需要理解工作区的任何概念，只负责按顺序拼页。
+
+    两个容易出事的地方，这里都特意处理了：
+    1. **源文件可能就是要覆盖的目标**。所有源句柄必须在 os.replace 之前关掉，
+       否则 Windows 上会因文件占用而失败。因此先写临时文件、关句柄、再原子改名。
+    2. 失败时清掉半成品，避免留下一个"看起来能用"的坏 PDF。
+    """
+    tmp = f"{output_path}.building"
+    try:
+        with open(plan_path, "r", encoding="utf-8") as f:
+            plan = json.load(f)
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        writer: fitz.Document = fitz.open()
+        handles = {}
+        try:
+            for item in plan.get("pages", []):
+                blank = item.get("blank")
+                if blank:
+                    paper = blank.get("paper") or "A4"
+                    orientation = blank.get("orientation") or "portrait"
+                    # 与"插入空白页"功能保持同一套纸张定义
+                    try:
+                        fmt = (fitz.paper_rect(f"{paper}-l")
+                               if orientation == "landscape" else fitz.paper_rect(paper))
+                    except Exception:
+                        fmt = fitz.paper_rect("A4")
+                    writer.new_page(width=fmt.width, height=fmt.height)
+                    continue
+
+                path = item.get("path")
+                if not path:
+                    continue
+                if path not in handles:
+                    handles[path] = fitz.open(path)
+                src = handles[path]
+                idx = int(item.get("index", 0))
+                if idx < 0 or idx >= src.page_count:
+                    continue
+                writer.insert_pdf(src, from_page=idx, to_page=idx)
+                rot = int(item.get("rotation", 0)) % 360
+                if rot:
+                    writer[-1].set_rotation(rot)
+
+            if writer.page_count == 0:
+                raise ValueError("清单里没有任何页面，已取消导出")
+
+            writer.save(tmp, garbage=4 if compress else 3, deflate=True, clean=bool(compress))
+        finally:
+            writer.close()
+            for d in handles.values():
+                try:
+                    d.close()
+                except Exception:
+                    pass
+
+        os.replace(tmp, output_path)
+        utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+    except:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
         logger.error(traceback.format_exc())
         utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})

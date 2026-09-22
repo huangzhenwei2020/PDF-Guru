@@ -274,12 +274,20 @@ export function WorkspaceAutoOps() {
   return window['go']['main']['App']['WorkspaceAutoOps']();
 }
 
+export function WorkspaceBuild(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['WorkspaceBuild'](arg1, arg2, arg3, arg4);
+}
+
 export function WorkspaceCacheRoot() {
   return window['go']['main']['App']['WorkspaceCacheRoot']();
 }
 
 export function WorkspaceOpen(arg1) {
   return window['go']['main']['App']['WorkspaceOpen'](arg1);
+}
+
+export function WorkspaceSetDirty(arg1) {
+  return window['go']['main']['App']['WorkspaceSetDirty'](arg1);
 }
 
 export function WorkspaceThumbs(arg1, arg2, arg3) {

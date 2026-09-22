@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	wails_runtime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ---------------------------------------------------------------------------
@@ -286,4 +289,185 @@ func (a *App) WorkspaceAutoOpenPath() string {
 // 界面状态就能被截图核对了。语法见 frontend/src/components/Workspace/devops.ts。
 func (a *App) WorkspaceAutoOps() string {
 	return strings.TrimSpace(os.Getenv("PDFGURU_WS_AUTOPS"))
+}
+
+// ---------------------------------------------------------------------------
+// 导出（Phase 4）
+// ---------------------------------------------------------------------------
+
+// wsBuildItem 是前端传来的待导出项。前端只说"哪一页"，不含任何文件路径。
+type wsBuildItem struct {
+	Kind        string `json:"kind"`
+	DocID       string `json:"docId"`
+	PageIndex   int    `json:"pageIndex"`
+	Rotation    int    `json:"rotation"`
+	Paper       string `json:"paper"`
+	Orientation string `json:"orientation"`
+}
+
+// wsPlanPage 是交给 Python 的清单项：docId 已经解析成真实路径。
+type wsPlanPage struct {
+	Path     string       `json:"path,omitempty"`
+	Index    int          `json:"index"`
+	Rotation int          `json:"rotation,omitempty"`
+	Blank    *wsPlanBlank `json:"blank,omitempty"`
+}
+
+type wsPlanBlank struct {
+	Paper       string `json:"paper"`
+	Orientation string `json:"orientation"`
+}
+
+// WorkspaceBuild 把当前清单落成 PDF，返回一句可直接展示给用户的结果说明。
+//
+// makeBackup 为真且目标已存在时，会先把原文件备份成 .bak。备份刻意"只留第一份"：
+// 已有 .bak 就不再覆盖，这样连续保存不会把最初那一版冲掉。
+func (a *App) WorkspaceBuild(itemsJSON string, outFile string, compress bool, makeBackup bool) (string, error) {
+	wsInit()
+
+	if strings.TrimSpace(outFile) == "" {
+		return "", errors.New("请先指定输出文件")
+	}
+	if !filepath.IsAbs(outFile) {
+		return "", errors.New("输出路径必须是绝对路径")
+	}
+
+	var items []wsBuildItem
+	if err := json.Unmarshal([]byte(itemsJSON), &items); err != nil {
+		return "", errors.Wrap(err, "解析页面清单失败")
+	}
+	if len(items) == 0 {
+		return "", errors.New("工作区里没有任何页面")
+	}
+
+	pages := make([]wsPlanPage, 0, len(items))
+	for _, it := range items {
+		if it.Kind == "blank" {
+			paper := it.Paper
+			if paper == "" {
+				paper = "A4"
+			}
+			orient := it.Orientation
+			if orient == "" {
+				orient = "portrait"
+			}
+			pages = append(pages, wsPlanPage{Blank: &wsPlanBlank{Paper: paper, Orientation: orient}})
+			continue
+		}
+
+		wsMu.Lock()
+		info, ok := wsDocs[it.DocID]
+		wsMu.Unlock()
+		if !ok {
+			return "", fmt.Errorf("页面来源已失效，请重新打开文档（%s）", it.DocID)
+		}
+		pages = append(pages, wsPlanPage{Path: info.Path, Index: it.PageIndex, Rotation: it.Rotation})
+	}
+
+	backupNote := ""
+	if makeBackup {
+		if _, err := os.Stat(outFile); err == nil {
+			bak := outFile + ".bak"
+			if _, err := os.Stat(bak); os.IsNotExist(err) {
+				if err := copyFile(outFile, bak); err != nil {
+					return "", errors.Wrap(err, "备份原文件失败，已取消导出")
+				}
+				backupNote = fmt.Sprintf("，原文件已备份为 %s", filepath.Base(bak))
+			} else {
+				backupNote = "，原文件备份已存在（保留最早的版本）"
+			}
+		}
+	}
+
+	// 每次导出用独立清单文件，避免并发导出互相覆盖
+	wsMu.Lock()
+	wsSeq++
+	reqID := wsSeq
+	wsMu.Unlock()
+	planPath := filepath.Join(wsCacheRoot, "plan", fmt.Sprintf("build-%d.json", reqID))
+	if err := os.MkdirAll(filepath.Dir(planPath), 0755); err != nil {
+		return "", errors.Wrap(err, "创建清单目录失败")
+	}
+	planData, err := json.Marshal(struct {
+		Pages []wsPlanPage `json:"pages"`
+	}{Pages: pages})
+	if err != nil {
+		return "", errors.Wrap(err, "生成导出清单失败")
+	}
+	if err := os.WriteFile(planPath, planData, 0644); err != nil {
+		return "", errors.Wrap(err, "写入导出清单失败")
+	}
+
+	args := []string{"ws-build", "--output", outFile}
+	if compress {
+		args = append(args, "--compress")
+	}
+	args = append(args, planPath)
+	if err := a.cmdRunner(args, "pdf"); err != nil {
+		return "", err
+	}
+
+	logger.Printf("工作区导出成功: %d 页 -> %s\n", len(pages), outFile)
+	return fmt.Sprintf("已导出 %d 页到 %s%s", len(pages), outFile, backupNote), nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+// ---------------------------------------------------------------------------
+// 未保存状态
+// ---------------------------------------------------------------------------
+
+var wsDirty bool
+
+// WorkspaceSetDirty 由前端同步"是否有未保存的更改"，供关闭窗口前拦截使用。
+func (a *App) WorkspaceSetDirty(dirty bool) {
+	wsMu.Lock()
+	wsDirty = dirty
+	wsMu.Unlock()
+}
+
+// onBeforeClose 在用户点关闭时被 Wails 调用。
+// 返回 true 表示阻止关闭。有未保存更改时弹原生确认框——
+// 用原生对话框而不是页面内弹窗，是因为此时窗口正要关闭，页面内弹窗可能来不及响应用户。
+func (a *App) onBeforeClose(ctx context.Context) bool {
+	wsMu.Lock()
+	dirty := wsDirty
+	wsMu.Unlock()
+
+	if !dirty {
+		return false
+	}
+
+	const abandon = "放弃更改并关闭"
+	const cancel = "取消"
+	choice, err := wails_runtime.MessageDialog(ctx, wails_runtime.MessageDialogOptions{
+		Type:          wails_runtime.QuestionDialog,
+		Title:         "有未保存的更改",
+		Message:       "工作区里还有未保存的更改。关闭后这些改动会丢失。",
+		Buttons:       []string{abandon, cancel},
+		DefaultButton: cancel,
+		CancelButton:  cancel,
+	})
+	if err != nil {
+		logger.Errorln("关闭确认框失败:", err)
+		return false
+	}
+	return choice != abandon
 }

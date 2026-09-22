@@ -32,6 +32,26 @@
 
             <a-divider type="vertical" />
 
+            <a-tooltip :title="store.dirty ? '保存到 ' + store.mainPath : '没有未保存的更改'">
+                <a-button :type="store.dirty ? 'primary' : 'default'" :disabled="!store.seq.length || !store.mainPath"
+                    :loading="store.saving" @click="doSave">
+                    <template #icon>
+                        <save-outlined />
+                    </template>
+                    保存
+                </a-button>
+            </a-tooltip>
+            <a-tooltip title="导出为新的 PDF（Ctrl+Shift+S）">
+                <a-button :disabled="!store.seq.length" :loading="store.saving" @click="openExport">
+                    <template #icon>
+                        <export-outlined />
+                    </template>
+                    导出
+                </a-button>
+            </a-tooltip>
+
+            <a-divider type="vertical" />
+
             <a-tooltip title="撤销 (Ctrl+Z)">
                 <a-button :disabled="!store.canUndo" @click="store.undo()">
                     <template #icon>
@@ -84,6 +104,7 @@
             <a-button size="small" :disabled="!store.selected.length" @click="store.clearSelection()">取消选择</a-button>
 
             <span class="ws-spacer"></span>
+            <a-tag v-if="store.dirty" color="orange">未保存</a-tag>
             <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
             <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
             <span class="ws-meta" v-if="store.seq.length">
@@ -177,25 +198,63 @@
                 <span v-if="insError" class="ws-err"> · {{ insError }}</span>
             </div>
         </a-modal>
+        <!-- 导出 -->
+        <a-modal v-model:visible="exportVisible" title="导出 PDF" ok-text="导出" cancel-text="取消"
+            :confirm-loading="store.saving" @ok="doExport">
+            <a-form layout="vertical">
+                <a-form-item label="输出文件">
+                    <a-row :gutter="8">
+                        <a-col :span="19">
+                            <a-input v-model:value="exportPath" placeholder="输出 PDF 的完整路径" />
+                        </a-col>
+                        <a-col :span="5">
+                            <a-button @click="pickExportPath">选择…</a-button>
+                        </a-col>
+                    </a-row>
+                </a-form-item>
+                <a-form-item label="范围">
+                    <a-radio-group v-model:value="exportScope">
+                        <a-radio-button value="all">全部 {{ store.seq.length }} 页</a-radio-button>
+                        <a-radio-button value="selected" :disabled="!store.selected.length">
+                            仅选中 {{ store.selected.length }} 页
+                        </a-radio-button>
+                    </a-radio-group>
+                </a-form-item>
+                <a-form-item style="margin-bottom: 0;">
+                    <a-checkbox v-model:checked="exportCompress">更强的压缩（稍慢）</a-checkbox>
+                </a-form-item>
+                <a-form-item style="margin-bottom: 0;">
+                    <a-checkbox v-model:checked="exportBackup">
+                        目标已存在时先备份为 .bak（只保留最早的一份）
+                    </a-checkbox>
+                </a-form-item>
+            </a-form>
+            <div class="ws-note" style="margin-top: 10px;">
+                将导出 {{ exportCount }} 页
+                <span v-if="exportScope === 'selected'">（只导出选中的页面，工作区其余内容不受影响）</span>
+            </div>
+        </a-modal>
     </div>
 </template>
 
 <script lang="ts">
 import { computed, defineComponent, onMounted, onUnmounted, ref } from 'vue';
-import { message } from 'ant-design-vue';
+import { message, Modal } from 'ant-design-vue';
 import {
     CopyOutlined,
     DeleteOutlined,
     DownOutlined,
+    ExportOutlined,
     FileOutlined,
     FolderOpenOutlined,
     PlusOutlined,
     RedoOutlined,
     RotateLeftOutlined,
     RotateRightOutlined,
+    SaveOutlined,
     UndoOutlined,
 } from '@ant-design/icons-vue';
-import { SelectFile, SelectMultipleFiles } from '../../../wailsjs/go/main/App';
+import { SelectFile, SelectMultipleFiles, SaveFile } from '../../../wailsjs/go/main/App';
 import { useWorkspaceState } from '../../store/workspace';
 import { indexOfId, parseRange, type RailRow } from './model';
 import { runOps } from './devops';
@@ -206,12 +265,14 @@ export default defineComponent({
         CopyOutlined,
         DeleteOutlined,
         DownOutlined,
+        ExportOutlined,
         FileOutlined,
         FolderOpenOutlined,
         PlusOutlined,
         RedoOutlined,
         RotateLeftOutlined,
         RotateRightOutlined,
+        SaveOutlined,
         UndoOutlined,
         ThumbRail,
     },
@@ -422,6 +483,88 @@ export default defineComponent({
             }
         };
 
+        // --- 保存与导出 ---------------------------------------------------
+
+        const exportVisible = ref(false);
+        const exportPath = ref('');
+        const exportScope = ref<'all' | 'selected'>('all');
+        const exportCompress = ref(false);
+        const exportBackup = ref(true);
+
+        const exportCount = computed(() =>
+            exportScope.value === 'selected' ? store.selected.length : store.seq.length
+        );
+
+        /** 把合并结果整体写回主来源文件。多来源时会先确认，因为它会改动原文件。 */
+        const runSave = async (target: string) => {
+            try {
+                const msg = await store.exportTo(target, 'all', false, true);
+                message.success(msg);
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
+        const doSave = async () => {
+            const target = store.mainPath;
+            if (!target) {
+                message.error('没有可保存的目标文件，请用「导出」指定输出路径');
+                return;
+            }
+            if (store.sourceList.length > 1) {
+                Modal.confirm({
+                    title: '保存会覆盖原文件',
+                    content:
+                        `工作区合并了 ${store.sourceList.length} 个来源，保存会把合并后的结果整体写入：${target}` +
+                        `。原文件会自动备份为 .bak。`,
+                    okText: '保存',
+                    cancelText: '取消',
+                    onOk: () => runSave(target),
+                });
+                return;
+            }
+            await runSave(target);
+        };
+
+        const openExport = () => {
+            if (!exportPath.value) {
+                const p = store.mainPath;
+                exportPath.value = p ? p.replace(/\.pdf$/i, '') + '-导出.pdf' : '';
+            }
+            // 只选了一部分页时，默认导出选中的部分，符合"我选它就是要它"的直觉
+            exportScope.value =
+                store.selected.length > 0 && store.selected.length < store.seq.length ? 'selected' : 'all';
+            exportVisible.value = true;
+        };
+
+        const pickExportPath = async () => {
+            try {
+                const p: string = await SaveFile();
+                if (p) exportPath.value = p;
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
+        const doExport = async () => {
+            if (!exportPath.value.trim()) {
+                message.error('请先指定输出文件');
+                return;
+            }
+            try {
+                const msg = await store.exportTo(
+                    exportPath.value.trim(),
+                    exportScope.value,
+                    exportCompress.value,
+                    exportBackup.value
+                );
+                message.success(msg);
+                exportVisible.value = false;
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
         // --- 其它交互 -----------------------------------------------------
 
         const onSelect = (id: string, mode: string) => {
@@ -452,6 +595,12 @@ export default defineComponent({
         const onKey = (e: KeyboardEvent) => {
             if (!store.seq.length) return;
             const ctrl = e.ctrlKey || e.metaKey;
+            if (ctrl && e.key.toLowerCase() === 's') {
+                e.preventDefault();
+                if (e.shiftKey) openExport();
+                else doSave();
+                return;
+            }
             if (ctrl && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
                 if (e.shiftKey) store.redo();
@@ -497,7 +646,7 @@ export default defineComponent({
                     await store.open(auto);
                     const script = await store.autoOps();
                     if (script) {
-                        const log = await runOps(store, script);
+                        const log = await runOps(store, script, { openExport });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
                         if (store.current) await store.focusItem(store.current);
@@ -544,6 +693,17 @@ export default defineComponent({
             insCount,
             insError,
             doInsertFromPdf,
+            // 保存与导出
+            doSave,
+            openExport,
+            pickExportPath,
+            doExport,
+            exportVisible,
+            exportPath,
+            exportScope,
+            exportCompress,
+            exportBackup,
+            exportCount,
         };
     },
 });

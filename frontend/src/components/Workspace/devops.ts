@@ -46,7 +46,7 @@ function positionsToIds(seq: WSItem[], spec: string): string[] {
     return ids;
 }
 
-export async function runOps(store: any, script: string): Promise<string[]> {
+export async function runOps(store: any, script: string, ui?: any): Promise<string[]> {
     const log: string[] = [];
     const tokens = script
         .split(";")
@@ -105,6 +105,23 @@ export async function runOps(store: any, script: string): Promise<string[]> {
                     log.push(`inspdf:${spec} -> ${idx.length} 页`);
                 } catch (e: any) {
                     log.push(`inspdf 失败: ${e?.message ?? e}`);
+                }
+                break;
+            }
+            // exportdlg —— 打开导出弹窗（弹窗同样是截图验证的对象，靠模拟点击去猜
+            // 按钮像素坐标既脆弱又慢，直接调用更可靠）
+            case "exportdlg": {
+                ui?.openExport?.();
+                log.push("exportdlg");
+                break;
+            }
+            // build:<输出路径> —— 走一遍真实导出，验证保存链路
+            case "build": {
+                try {
+                    const msg = await store.exportTo(arg, "all", false, true);
+                    log.push(`build -> ${msg}`);
+                } catch (e: any) {
+                    log.push(`build 失败: ${e?.message ?? e}`);
                 }
                 break;
             }

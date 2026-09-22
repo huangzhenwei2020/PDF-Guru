@@ -4,6 +4,8 @@ import {
     WorkspaceThumbs,
     WorkspaceCacheRoot,
     WorkspaceAddImageSource,
+    WorkspaceBuild,
+    WorkspaceSetDirty,
     WorkspaceAutoOpenPath,
     WorkspaceAutoOps,
 } from "../../wailsjs/go/main/App";
@@ -107,6 +109,11 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         loading: false,
         previewLoading: false,
         error: "",
+        /** 是否有未保存的更改。判定方式见 syncDirty：与上次保存时的快照比对 */
+        dirty: false,
+        /** 上次保存/打开时的清单快照，用于精确判断"未保存" */
+        savedSeqJSON: "",
+        saving: false,
     }),
 
     getters: {
@@ -143,6 +150,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         },
         sourceList(state): WSSource[] {
             return Object.values(state.sources);
+        },
+        /** 「保存」的目标：第一个来源文件。 */
+        mainPath(state): string {
+            return Object.values(state.sources)[0]?.path ?? "";
         },
         /** 界面标题：用第一个来源的文件名 */
         title(state): string {
@@ -201,6 +212,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 past: [],
                 future: [],
                 error: "",
+                dirty: false,
+                savedSeqJSON: "",
             });
         },
 
@@ -263,6 +276,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 if (this.current) {
                     await this.focusItem(this.current);
                 }
+                this.markSaved();
             } catch (e: any) {
                 this.error = String(e?.message ?? e);
             } finally {
@@ -414,6 +428,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.seq = next;
             if (nextSelection) this.selected = nextSelection.filter((id) => indexOfId(next, id) >= 0);
             this.reconcileSelection();
+            this.syncDirty();
         },
 
         doMove(ids: string[], insertBefore: number) {
@@ -514,6 +529,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.future.push(snapshot(this.seq));
             this.seq = prev;
             this.reconcileSelection();
+            this.syncDirty();
         },
 
         redo() {
@@ -522,6 +538,75 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.past.push(snapshot(this.seq));
             this.seq = next;
             this.reconcileSelection();
+            this.syncDirty();
+        },
+
+        // --- 保存与导出（Phase 4）-----------------------------------------
+
+        /**
+         * 用"与上次保存时的快照比对"来判断是否有未保存的更改。
+         * 这样撤销回到已保存的状态时，标记会自动消失，而不是一直亮着。
+         */
+        syncDirty() {
+            const now = JSON.stringify(this.seq);
+            const dirty = now !== this.savedSeqJSON;
+            if (dirty !== this.dirty) {
+                this.dirty = dirty;
+                // 同步给 Go，供关闭窗口前拦截使用；失败不影响正常编辑
+                WorkspaceSetDirty(dirty).catch(() => undefined);
+            }
+        },
+
+        markSaved() {
+            this.savedSeqJSON = JSON.stringify(this.seq);
+            this.dirty = false;
+            WorkspaceSetDirty(false).catch(() => undefined);
+        },
+
+        /**
+         * 序列化清单供导出。前端只给 docId，真实文件路径由 Go 侧解析——
+         * 这样前端始终拿不到本地路径，也不用担心拼接错误。
+         */
+        itemsPayload(scope: "all" | "selected"): string {
+            const picked = scope === "selected" ? new Set(this.selected) : null;
+            const items = this.seq
+                .filter((it) => !picked || picked.has(it.id))
+                .map((it) =>
+                    it.kind === "blank"
+                        ? { kind: "blank", paper: it.paper, orientation: it.orientation }
+                        : { kind: "page", docId: it.docId, pageIndex: it.pageIndex, rotation: it.rotation }
+                );
+            return JSON.stringify(items);
+        },
+
+        async exportTo(
+            outFile: string,
+            scope: "all" | "selected",
+            compress: boolean,
+            backup: boolean
+        ): Promise<string> {
+            this.saving = true;
+            this.error = "";
+            try {
+                const msg: string = await WorkspaceBuild(
+                    this.itemsPayload(scope),
+                    outFile,
+                    compress,
+                    backup
+                );
+                // 输出文件若正好是某个来源，那份来源的内容已经被改写，
+                // 清单里指向它的页下标就失效了，必须重新加载，否则后续导出会串页。
+                const hitSource = Object.values(this.sources).some((s) => s.path === outFile);
+                if (hitSource) {
+                    await this.open(outFile);
+                } else if (scope === "all") {
+                    // 全部内容已落盘，视为没有未保存的更改
+                    this.markSaved();
+                }
+                return msg;
+            } finally {
+                this.saving = false;
+            }
         },
 
         // --- 无人值守验证用的钩子 ------------------------------------------
