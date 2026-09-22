@@ -1,13 +1,13 @@
 <template>
-    <div class="rail">
-        <div v-for="(row, i) in rows" :key="row.id" class="row" :class="{
+    <div ref="railEl" class="rail" :class="{ dragging }" @scroll="onScroll">
+        <div v-for="(row, i) in rows" :key="row.id" class="row" :data-index="i" :class="{
             sel: selectedSet.has(row.id),
             cur: row.id === current,
+            moved: dragging && dragSet.has(row.id),
             'drop-before': dropIndex === i && !dropAfter,
             'drop-after': dropIndex === i && dropAfter,
             blank: row.kind === 'blank',
-        }" draggable="true" @dragstart="onDragStart(row, $event)" @dragover="onDragOver(i, $event)"
-            @drop="onDrop(i, $event)" @dragend="onDragEnd" @click="onClick(row, $event)">
+        }" @pointerdown="onPointerDown(row, $event)" @click="onClick(row, $event)">
             <div class="box" :style="boxStyle(row)">
                 <img v-if="row.url" :src="row.url" :style="imgStyle(row)" draggable="false" alt="" />
                 <div v-else class="blankface">{{ row.paper || "空白页" }}</div>
@@ -17,6 +17,11 @@
             <span v-if="row.rotation" class="rot">{{ row.rotation }}°</span>
         </div>
         <div v-if="!rows.length" class="hint">打开一个 PDF 后，这里会列出每一页</div>
+
+        <!-- 拖拽时跟随光标的提示，让"正在搬几页"一目了然 -->
+        <div v-if="dragging" class="ghost" :style="{ left: ghostX + 'px', top: ghostY + 'px' }">
+            移动 {{ dragIds.length }} 页
+        </div>
     </div>
 </template>
 
@@ -24,6 +29,15 @@
 import { defineComponent, ref, computed, type PropType } from 'vue';
 import type { RailRow } from './model';
 
+/**
+ * 缩略图轨道。
+ *
+ * 拖拽没有用 HTML5 原生 DnD，而是基于 pointer 事件自己实现，原因有两个：
+ * 1. 原生 dragstart 依赖系统拖拽循环，合成鼠标输入触发不了，导致这条核心交互
+ *    完全无法自动化验证；
+ * 2. 自己实现才能顺手加上边缘自动滚动与拖拽提示。
+ * 顺带的好处是鼠标与触摸走同一条代码路径。
+ */
 export default defineComponent({
     name: 'ThumbRail',
     props: {
@@ -31,54 +45,145 @@ export default defineComponent({
         selected: { type: Array as PropType<string[]>, default: () => [] },
         current: { type: String, default: '' },
     },
-    emits: ['select', 'move', 'focus'],
+    emits: ['select', 'move'],
     setup(props, { emit }) {
-        // 拖拽期间的状态。dragIds 在 dragstart 时确定，因此"拖一个即拖一组"
-        // 是天然成立的：拖动已选中的任意一项，整组都会跟着走。
+        const railEl = ref<HTMLElement | null>(null);
+
         const dragIds = ref<string[]>([]);
+        const dragging = ref(false);
         const dropIndex = ref<number>(-1);
         const dropAfter = ref<boolean>(false);
+        const ghostX = ref(0);
+        const ghostY = ref(0);
+
+        /** 按下但还没越过阈值：此时仍可能是一次点击 */
+        let pending: { id: string; x: number; y: number } | null = null;
+        /** 拖拽期间缓存各行位置，避免每次移动都去读 1000 个元素的几何信息 */
+        let rects: { top: number; bottom: number }[] = [];
+        /** 拖拽结束后浏览器可能补发一次 click（落点与起点同一行时），需要忽略，
+         *  否则整组拖动原地放下会把选区塌缩成一项。 */
+        let justDragged = false;
 
         const selectedSet = computed(() => new Set(props.selected));
+        const dragSet = computed(() => new Set(dragIds.value));
 
-        const onDragStart = (row: RailRow, e: DragEvent) => {
-            const inSelection = props.selected.includes(row.id);
-            if (!inSelection) {
-                emit('select', row.id, 'replace');
-                dragIds.value = [row.id];
-            } else {
-                dragIds.value = [...props.selected];
+        const cacheRects = () => {
+            const els = railEl.value?.querySelectorAll('.row');
+            rects = els
+                ? Array.from(els).map((el) => {
+                    const r = el.getBoundingClientRect();
+                    return { top: r.top, bottom: r.bottom };
+                })
+                : [];
+        };
+
+        const onScroll = () => {
+            if (dragging.value) cacheRects();
+        };
+
+        /** 拖到轨道上下边缘时自动滚动，否则长文档里根本拖不到远处 */
+        const autoScroll = (clientY: number) => {
+            const el = railEl.value;
+            if (!el) return;
+            const r = el.getBoundingClientRect();
+            const margin = 40;
+            if (clientY < r.top + margin) {
+                el.scrollTop -= 14;
+                cacheRects();
+            } else if (clientY > r.bottom - margin) {
+                el.scrollTop += 14;
+                cacheRects();
             }
-            // 某些 WebView 只有设置了数据才会真正开始拖拽
-            e.dataTransfer?.setData('text/plain', row.id);
-            if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
         };
 
-        const onDragOver = (i: number, e: DragEvent) => {
-            e.preventDefault();
-            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-            const el = e.currentTarget as HTMLElement;
-            const rect = el.getBoundingClientRect();
-            dropIndex.value = i;
-            dropAfter.value = e.clientY > rect.top + rect.height / 2;
+        const updateDropTarget = (clientY: number) => {
+            if (!rects.length) cacheRects();
+            let idx = -1;
+            let after = false;
+            for (let i = 0; i < rects.length; i++) {
+                if (clientY >= rects[i].top && clientY <= rects[i].bottom) {
+                    idx = i;
+                    after = clientY > rects[i].top + (rects[i].bottom - rects[i].top) / 2;
+                    break;
+                }
+            }
+            if (idx < 0 && rects.length) {
+                // 落在行之外：按在整列表的上方/下方决定插到最前或最后
+                if (clientY < rects[0].top) {
+                    idx = 0;
+                    after = false;
+                } else if (clientY > rects[rects.length - 1].bottom) {
+                    idx = rects.length - 1;
+                    after = true;
+                }
+            }
+            dropIndex.value = idx;
+            dropAfter.value = after;
         };
 
-        const onDrop = (i: number, e: DragEvent) => {
-            e.preventDefault();
-            const ids = dragIds.value;
-            // insertBefore 用原数组坐标：插到第 i 项之前，落在下半区则插到它之后
-            const insertBefore = i + (dropAfter.value ? 1 : 0);
-            onDragEnd();
-            if (ids.length) emit('move', ids, insertBefore);
-        };
-
-        const onDragEnd = () => {
+        const resetDrag = () => {
+            dragging.value = false;
             dragIds.value = [];
             dropIndex.value = -1;
             dropAfter.value = false;
+            rects = [];
+        };
+
+        const onPointerDown = (row: RailRow, e: PointerEvent) => {
+            if (e.button !== 0) return;
+            pending = { id: row.id, x: e.clientX, y: e.clientY };
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+            window.addEventListener('pointercancel', onPointerUp);
+        };
+
+        const onPointerMove = (e: PointerEvent) => {
+            ghostX.value = e.clientX;
+            ghostY.value = e.clientY;
+
+            if (!dragging.value) {
+                if (!pending) return;
+                // 超过阈值才算拖拽，否则保留为点击，避免手抖误触发排序
+                if (Math.abs(e.clientY - pending.y) + Math.abs(e.clientX - pending.x) < 5) return;
+
+                dragging.value = true;
+                if (props.selected.includes(pending.id)) {
+                    // 拖动选区中的任意一项 = 拖动整组
+                    dragIds.value = [...props.selected];
+                } else {
+                    dragIds.value = [pending.id];
+                    emit('select', pending.id, 'replace');
+                }
+                cacheRects();
+            }
+            autoScroll(e.clientY);
+            updateDropTarget(e.clientY);
+        };
+
+        const onPointerUp = () => {
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+            window.removeEventListener('pointercancel', onPointerUp);
+
+            if (dragging.value) {
+                const ids = dragIds.value;
+                // insertBefore 用原数组坐标：插到第 idx 行之前；落在下半区则插到它之后
+                const insertBefore = dropIndex.value + (dropAfter.value ? 1 : 0);
+                const valid = dropIndex.value >= 0 && ids.length > 0;
+                resetDrag();
+                pending = null;
+                justDragged = true;
+                window.setTimeout(() => {
+                    justDragged = false;
+                }, 0);
+                if (valid) emit('move', ids, insertBefore);
+                return;
+            }
+            pending = null;
         };
 
         const onClick = (row: RailRow, e: MouseEvent) => {
+            if (justDragged) return;
             const mode = e.ctrlKey || e.metaKey ? 'toggle' : e.shiftKey ? 'range' : 'replace';
             emit('select', row.id, mode);
         };
@@ -100,14 +205,18 @@ export default defineComponent({
         });
 
         return {
+            railEl,
             selectedSet,
+            dragSet,
+            dragging,
+            dragIds,
             dropIndex,
             dropAfter,
-            onDragStart,
-            onDragOver,
-            onDrop,
-            onDragEnd,
+            ghostX,
+            ghostY,
+            onPointerDown,
             onClick,
+            onScroll,
             boxStyle,
             imgStyle,
         };
@@ -117,12 +226,17 @@ export default defineComponent({
 
 <style scoped>
 .rail {
+    position: relative;
     width: 200px;
     flex: 0 0 200px;
     overflow-y: auto;
     background: #fafafa;
     border-right: 1px solid #e8e8e8;
     padding: 10px;
+}
+
+.rail.dragging {
+    cursor: grabbing;
 }
 
 .row {
@@ -136,10 +250,7 @@ export default defineComponent({
     text-align: center;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     user-select: none;
-}
-
-.row:active {
-    cursor: grabbing;
+    touch-action: none;
 }
 
 .row.sel {
@@ -150,6 +261,10 @@ export default defineComponent({
 .row.cur {
     border-color: #1677ff;
     box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.15);
+}
+
+.row.moved {
+    opacity: 0.45;
 }
 
 /* 插入位置指示线 */
@@ -228,6 +343,19 @@ export default defineComponent({
     background: #fff7e6;
     border-radius: 3px;
     padding: 0 3px;
+}
+
+.ghost {
+    position: fixed;
+    z-index: 9999;
+    pointer-events: none;
+    transform: translate(14px, 14px);
+    background: #1677ff;
+    color: #fff;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .hint {
