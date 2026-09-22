@@ -1,9 +1,25 @@
-pymupdf
-reportlab
-pillow
-loguru
-pyinstaller
-numpy
-requests
-pdfrw>=0.4
-defusedxml
+# 固定版本：以下组合已在 Python 3.13 / Windows 上完整验证（见 _smoke/smoke.ps1，33/33 通过）
+#
+# 为什么必须锁死：
+#   这套代码是 2023 年针对 PyMuPDF 1.22/1.23 写的，且大量使用已废弃的 `import fitz`。
+#   PyMuPDF 后续版本会改名或移除旧 API，直接打断功能——已实测踩到：
+#       Document.isEncrypted  ->  is_encrypted   （1.28 起旧名被移除）
+#   升级任一版本前，务必先跑一遍 _smoke/smoke.ps1。
+
+# --- 运行期依赖（pdf.exe 内部使用）---
+pymupdf==1.28.2
+reportlab==5.0.1
+pillow==12.3.0
+loguru==0.7.3
+numpy==2.5.3
+requests==2.34.2
+pdfrw==0.4
+defusedxml==0.7.1
+
+# --- 构建期依赖（把 pdf.py 冻结成单文件 pdf.exe）---
+pyinstaller==6.22.3
+
+# --- 注意：ocr.py 的依赖刻意未列入 ---
+# ocr.py 需要 opencv-python / paddleocr / matplotlib / tqdm，体积约 1GB 量级。
+# 上游 CI 同样只拷贝 ocr.py 而不安装这些依赖，所以 OCR 相关功能在源码构建版中不可用。
+# 处理方式：已从界面隐藏 OCR 入口，待确定是否引入重依赖后再恢复。

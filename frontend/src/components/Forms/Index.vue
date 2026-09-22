@@ -444,7 +444,8 @@
                     <p><b style="font-size: medium;">双层PDF</b></p>
                 </div>
             </a-col>
-            <a-col>
+            <!-- OCR 依赖未随项目提供（见 thirdparty/requirements.txt），暂时隐藏入口 -->
+            <a-col v-if="false">
                 <div class="mycard">
                     <div style="margin-top: 10px;" @click="switchMenu('ocr', '')">
                         <svg t="1689739460342" class="icon" viewBox="0 0 1024 1024" version="1.1"

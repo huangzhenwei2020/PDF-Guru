@@ -152,12 +152,13 @@
                         </template>
                         {{ menuRecord['convert'] }}
                     </a-menu-item>
-                    <a-menu-item key="ocr">
+                    <!-- OCR 依赖未随项目提供（见 thirdparty/requirements.txt），暂时隐藏入口 -->
+                    <!-- <a-menu-item key="ocr">
                         <template #icon>
                             <eye-outlined />
                         </template>
                         {{ menuRecord['ocr'] }}
-                    </a-menu-item>
+                    </a-menu-item> -->
                     <!-- <a-menu-item key="crack">
                         <template #icon>
                             <tool-outlined />

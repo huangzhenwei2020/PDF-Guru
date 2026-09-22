@@ -11,6 +11,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
+# 默认页眉页脚边距 [上, 下, 左, 右]，单位 cm。
+# Go 端只在值非空时才传参，而 page_number 的 argparse 又没有默认值，
+# 于是这些位置会收到 None 并覆盖掉函数签名的默认值，必须在这里兜底。
+DEFAULT_MARGIN_BBOX = [1.27, 1.27, 2.54, 2.54]
+
 
 def create_header_and_footer_mask(
         width       : float,
@@ -28,9 +33,14 @@ def create_header_and_footer_mask(
         if output_path is None:
             output_path = "tmp_hf.pdf"
         c = canvas.Canvas(output_path,pagesize=(width, height))
+        # 调用方(Go/argparse)可能传入 None 覆盖掉函数签名的默认值，这里兜底
+        font_family = font_family or "msyh.ttc"
+        # 六大栏位留空时 Go 端不会传参，argparse 得到 None，统一成空串
+        content_list = [c or "" for c in content_list]
         fontpath = str(Path(os.environ['WINDIR']) / "fonts" / font_family)
         pdfmetrics.registerFont(TTFont('custom_font', fontpath))
         font_color = [v/255. for v in utils.hex_to_rgb(font_color)]
+        margin_bbox = margin_bbox or DEFAULT_MARGIN_BBOX
         margin_bbox = [utils.convert_length(x, unit, "pt") for x in margin_bbox]
         c.setFont("custom_font", font_size)
         c.setStrokeColorRGB(*font_color)
@@ -115,6 +125,7 @@ def remove_header_and_footer(doc_path: str,  margin_bbox: List[float], remove_li
         doc: fitz.Document = fitz.open(doc_path)
         width, height = doc[-1].rect.width, doc[-1].rect.height
         roi_indices = utils.parse_range(page_range, doc.page_count)
+        margin_bbox = margin_bbox or DEFAULT_MARGIN_BBOX
         margin_bbox = [utils.convert_length(x, unit, "pt") for x in margin_bbox]
         p = Path(doc_path)
         mask_doc_path = str(p.parent / "tmp_mask.pdf")

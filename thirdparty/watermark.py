@@ -37,6 +37,12 @@ def create_text_wartmark(
         if output_path is None:
             output_path = "watermark.pdf"
         c = canvas.Canvas(output_path,pagesize=(width,height))
+        # 调用方可能传入 None 覆盖掉函数签名的默认值，这里兜底并补全字体绝对路径
+        font = font or "msyh.ttc"
+        if not os.path.isabs(font):
+            windir = os.environ.get("WINDIR")
+            if windir:
+                font = str(Path(windir) / "fonts" / font)
         pdfmetrics.registerFont(TTFont('custom_font',font))
 
         parts = wm_text.split("\n")
