@@ -303,14 +303,18 @@ type wsBuildItem struct {
 	Rotation    int    `json:"rotation"`
 	Paper       string `json:"paper"`
 	Orientation string `json:"orientation"`
+	// 裁剪/遮盖等非破坏式操作。Go 不需要理解其内部结构，原样透传给 Python，
+	// 这样以后新增一类页面操作不必改动 Go 侧。
+	Ops json.RawMessage `json:"ops,omitempty"`
 }
 
 // wsPlanPage 是交给 Python 的清单项：docId 已经解析成真实路径。
 type wsPlanPage struct {
-	Path     string       `json:"path,omitempty"`
-	Index    int          `json:"index"`
-	Rotation int          `json:"rotation,omitempty"`
-	Blank    *wsPlanBlank `json:"blank,omitempty"`
+	Path     string          `json:"path,omitempty"`
+	Index    int             `json:"index"`
+	Rotation int             `json:"rotation,omitempty"`
+	Blank    *wsPlanBlank    `json:"blank,omitempty"`
+	Ops      json.RawMessage `json:"ops,omitempty"`
 }
 
 type wsPlanBlank struct {
@@ -361,7 +365,7 @@ func (a *App) WorkspaceBuild(itemsJSON string, outFile string, compress bool, ma
 		if !ok {
 			return "", fmt.Errorf("页面来源已失效，请重新打开文档（%s）", it.DocID)
 		}
-		pages = append(pages, wsPlanPage{Path: info.Path, Index: it.PageIndex, Rotation: it.Rotation})
+		pages = append(pages, wsPlanPage{Path: info.Path, Index: it.PageIndex, Rotation: it.Rotation, Ops: it.Ops})
 	}
 
 	backupNote := ""

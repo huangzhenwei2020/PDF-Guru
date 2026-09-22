@@ -167,9 +167,47 @@ def workspace_build(plan_path: str, output_path: str, compress: bool = False):
                 if idx < 0 or idx >= src.page_count:
                     continue
                 writer.insert_pdf(src, from_page=idx, to_page=idx)
+                newpage = writer[-1]
+
+                # 非破坏式的裁剪 / 遮盖在这里才落到 PDF。
+                # 坐标是归一化比例，且定义在页面【未旋转】的那一面：
+                # 尺寸必须取 mediabox —— page.rect 是旋转后的视图尺寸，
+                # 用它换算会让旋转过的页面上裁剪框跑到别处。
+                ops = item.get("ops") or {}
+                crop = ops.get("crop")
+                masks = ops.get("masks") or []
+                if crop or masks:
+                    mb = newpage.mediabox
+                    W, H = mb.width, mb.height
+
+                    def to_rect(r):
+                        nx = float(r.get("x", 0.0))
+                        ny = float(r.get("y", 0.0))
+                        nw = float(r.get("w", 0.0))
+                        nh = float(r.get("h", 0.0))
+                        x0 = mb.x0 + nx * W
+                        x1 = mb.x0 + (nx + nw) * W
+                        # 归一化的 y 原点在【上】，PDF 坐标原点在【下】，需要翻转
+                        y1 = mb.y1 - ny * H
+                        y0 = mb.y1 - (ny + nh) * H
+                        return fitz.Rect(x0, y0, x1, y1)
+
+                    for m in masks:
+                        rect = m.get("rect") or {}
+                        if not rect:
+                            continue
+                        rgb = tuple(v / 255.0 for v in utils.hex_to_rgb(m.get("color") or "#FFFF00"))
+                        opacity = max(0.0, min(1.0, float(m.get("opacity", 0.5))))
+                        newpage.draw_rect(to_rect(rect), color=None, fill=rgb,
+                                          fill_opacity=opacity, overlay=True)
+
+                    if crop:
+                        # 裁剪后"页面"就是这块区域（与 Acrobat 的裁剪一致）
+                        newpage.set_cropbox(to_rect(crop))
+
                 rot = int(item.get("rotation", 0)) % 360
                 if rot:
-                    writer[-1].set_rotation(rot)
+                    newpage.set_rotation(rot)
 
             if writer.page_count == 0:
                 raise ValueError("清单里没有任何页面，已取消导出")

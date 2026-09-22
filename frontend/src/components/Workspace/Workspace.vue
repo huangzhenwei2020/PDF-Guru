@@ -123,6 +123,25 @@
                 @move="onMove" />
 
             <div ref="canvasRef" class="ws-canvas">
+                <!-- 页面内容工具：裁剪/遮盖靠在这块区域上拖框完成 -->
+                <div class="ws-modes">
+                    <a-radio-group v-model:value="mode" size="small" button-style="solid">
+                        <a-radio-button value="view">浏览</a-radio-button>
+                        <a-radio-button value="crop">裁剪</a-radio-button>
+                        <a-radio-button value="mask">遮盖</a-radio-button>
+                    </a-radio-group>
+                    <template v-if="mode === 'mask'">
+                        <a-input v-model:value="maskColor" size="small" style="width: 84px" title="遮盖颜色" />
+                        <a-input-number v-model:value="maskOpacity" size="small" :min="0.1" :max="1" :step="0.1"
+                            style="width: 74px" title="不透明度" />
+                    </template>
+                    <a-button size="small" :disabled="!canEdit" @click="store.clearOpsOn()">清除操作</a-button>
+                    <span v-if="mode !== 'view'" class="ws-modehint">
+                        {{ mode === 'crop' ? '在页面上拖拽框出要保留的区域' : '在页面上拖拽框出要遮盖的区域' }}
+                        <template v-if="store.targetIds.length > 1">（将应用到选中的 {{ store.targetIds.length }} 页）</template>
+                    </span>
+                </div>
+
                 <div v-if="store.previewLoading" class="ws-hint">渲染中…</div>
 
                 <!-- 空白页 -->
@@ -134,7 +153,10 @@
 
                 <!-- 页面预览：旋转与缩放分层处理，每层只做一件事，
                      避免多个 transform 揉在一起后难以推理 -->
-                <div v-else-if="view" class="pv-fit" :style="{ width: view.fitW + 'px', height: view.fitH + 'px' }">
+                <div v-else-if="view" ref="canvasBoxRef" class="pv-fit"
+                    :class="{ 'pv-draw': mode !== 'view' }"
+                    :style="{ width: view.fitW + 'px', height: view.fitH + 'px' }"
+                    @pointerdown="onCanvasDown">
                     <div class="pv-box" :style="{
                         width: view.dispW + 'px',
                         height: view.dispH + 'px',
@@ -146,6 +168,13 @@
                             transform: `translate(-50%, -50%) rotate(${view.rot}deg)`,
                         }" alt="" @error="onImgError" />
                     </div>
+
+                    <!-- 已有操作的回显。坐标已从页面空间换算到显示空间，
+                         因此页面旋转后框仍会落在正确的位置。 -->
+                    <div v-if="overlay.crop" class="ov-crop" :style="pctStyle(overlay.crop)"></div>
+                    <div v-for="(m, i) in overlay.masks" :key="i" class="ov-mask"
+                        :style="Object.assign(pctStyle(m.rect), { background: m.color, opacity: m.opacity })"></div>
+                    <div v-if="dragRect" class="ov-drag" :style="pctStyle(dragRect)"></div>
                 </div>
 
                 <div v-else class="ws-hint">
@@ -256,7 +285,16 @@ import {
 } from '@ant-design/icons-vue';
 import { SelectFile, SelectMultipleFiles, SaveFile } from '../../../wailsjs/go/main/App';
 import { useWorkspaceState } from '../../store/workspace';
-import { indexOfId, parseRange, type RailRow } from './model';
+import {
+    clampRect,
+    displayRectToPageRect,
+    indexOfId,
+    pageRectToDisplayRect,
+    parseRange,
+    rectFromPoints,
+    type NormRect,
+    type RailRow,
+} from './model';
 import { runOps } from './devops';
 import ThumbRail from './ThumbRail.vue';
 
@@ -378,6 +416,97 @@ export default defineComponent({
                 fitH: Math.round(dispH * scale),
             };
         });
+
+        // --- 裁剪 / 遮盖的框选交互 ----------------------------------------
+
+        const mode = ref<'view' | 'crop' | 'mask'>('view');
+        const maskColor = ref('#FFFF00');
+        const maskOpacity = ref(1);
+        const canvasBoxRef = ref<HTMLElement | null>(null);
+        const dragRect = ref<NormRect | null>(null);
+        let dragFrom: { x: number; y: number } | null = null;
+
+        const pctStyle = (r: NormRect) => ({
+            left: `${r.x * 100}%`,
+            top: `${r.y * 100}%`,
+            width: `${r.w * 100}%`,
+            height: `${r.h * 100}%`,
+        });
+
+        /** 当前页已有操作的回显。换算回显示空间，因此页面旋转后框仍落在正确位置。 */
+        const overlay = computed(() => {
+            const it = store.currentItem;
+            if (!it || it.kind !== 'page') {
+                return { crop: null as NormRect | null, masks: [] as { rect: NormRect; color: string; opacity: number }[] };
+            }
+            const total = (store.pageInfoOf(it)?.rotation ?? 0) + (it.rotation || 0);
+            return {
+                crop: it.ops?.crop ? pageRectToDisplayRect(it.ops.crop, total) : null,
+                masks: (it.ops?.masks ?? []).map((m) => ({
+                    rect: pageRectToDisplayRect(m.rect, total),
+                    color: m.color,
+                    opacity: m.opacity,
+                })),
+            };
+        });
+
+        const relPos = (e: PointerEvent, el: HTMLElement) => {
+            const r = el.getBoundingClientRect();
+            return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+        };
+
+        const applyOp = (display: NormRect) => {
+            const it = store.currentItem;
+            if (!it) return;
+            if (it.kind !== 'page') {
+                message.info('空白页没有内容，无法裁剪或遮盖');
+                return;
+            }
+            // 画布上框出的是显示坐标；存进清单前必须换算到页面未旋转空间，
+            // 且要算上"页面固有旋转 + 工作区附加旋转"的总和。
+            const total = (store.pageInfoOf(it)?.rotation ?? 0) + (it.rotation || 0);
+            const pageRect = displayRectToPageRect(display, total);
+            const ids = store.targetIds.length ? store.targetIds : [it.id];
+            if (mode.value === 'crop') {
+                store.applyCrop(ids, pageRect);
+            } else {
+                store.applyMask(ids, pageRect, maskColor.value, maskOpacity.value);
+            }
+        };
+
+        const onCanvasMove = (e: PointerEvent) => {
+            const el = canvasBoxRef.value;
+            if (!dragFrom || !el) return;
+            const p = relPos(e, el);
+            dragRect.value = rectFromPoints(dragFrom.x, dragFrom.y, p.x, p.y);
+        };
+
+        const onCanvasUp = () => {
+            window.removeEventListener('pointermove', onCanvasMove);
+            window.removeEventListener('pointerup', onCanvasUp);
+            const r = dragRect.value;
+            dragFrom = null;
+            dragRect.value = null;
+            if (!r) return;
+            const clamped = clampRect(r);
+            if (!clamped) {
+                message.info('框选范围太小，已忽略');
+                return;
+            }
+            applyOp(clamped);
+        };
+
+        const onCanvasDown = (e: PointerEvent) => {
+            if (mode.value === 'view' || e.button !== 0) return;
+            const el = canvasBoxRef.value;
+            if (!el) return;
+            e.preventDefault();
+            const p = relPos(e, el);
+            dragFrom = p;
+            dragRect.value = { x: p.x, y: p.y, w: 0, h: 0 };
+            window.addEventListener('pointermove', onCanvasMove);
+            window.addEventListener('pointerup', onCanvasUp);
+        };
 
         // --- 插入 ---------------------------------------------------------
 
@@ -675,6 +804,15 @@ export default defineComponent({
             previewPage,
             view,
             canvasRef,
+            // 裁剪 / 遮盖
+            mode,
+            maskColor,
+            maskOpacity,
+            canvasBoxRef,
+            dragRect,
+            overlay,
+            pctStyle,
+            onCanvasDown,
             onSelect,
             onMove,
             pickFile,
@@ -747,6 +885,7 @@ export default defineComponent({
 }
 
 .ws-canvas {
+    position: relative;
     flex: 1;
     min-width: 0;
     display: flex;
@@ -757,9 +896,56 @@ export default defineComponent({
     padding: 12px;
 }
 
+/* 页面内容工具条：浮在画布左上角 */
+.ws-modes {
+    position: absolute;
+    left: 10px;
+    top: 8px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+}
+
+.ws-modehint {
+    font-size: 12px;
+    color: #888;
+    margin-left: 4px;
+}
+
 /* 外层只负责占位（已缩放的尺寸），内层负责缩放，图片负责旋转 */
 .pv-fit {
     position: relative;
+    overflow: hidden;
+}
+
+.pv-draw {
+    cursor: crosshair;
+    touch-action: none;
+}
+
+/* 裁剪框：用超大的 box-shadow 把框外压暗，比铺四块遮罩简单得多 */
+.ov-crop {
+    position: absolute;
+    border: 2px dashed #1677ff;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.38);
+    pointer-events: none;
+}
+
+.ov-mask {
+    position: absolute;
+    pointer-events: none;
+}
+
+.ov-drag {
+    position: absolute;
+    border: 2px dashed #fa8c16;
+    background: rgba(250, 140, 22, 0.16);
+    pointer-events: none;
 }
 
 .pv-box {

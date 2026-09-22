@@ -21,7 +21,7 @@
  * 注意：每个操作都会改变清单，后续位置随之变化，脚本要按顺序推算。
  */
 
-import { parseRange, type WSItem } from "./model";
+import { displayRectToPageRect, parseRange, type NormRect, type WSItem } from "./model";
 
 /** 把 "1,3-5" 这样的位置表达式翻译成当前清单里的 id。 */
 function positionsToIds(seq: WSItem[], spec: string): string[] {
@@ -123,6 +123,55 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 } catch (e: any) {
                     log.push(`build 失败: ${e?.message ?? e}`);
                 }
+                break;
+            }
+            // crop:x,y,w,h —— 显示空间的归一化矩形，走与界面拖框完全相同的换算，
+            // 因此这条脚本能验证"显示坐标 -> 页面未旋转坐标"这段最容易错的逻辑
+            case "crop": {
+                const parts = arg.split(",").map(Number);
+                if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) {
+                    log.push(`crop 语法错误: ${arg}`);
+                    break;
+                }
+                const display: NormRect = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+                const it = store.currentItem;
+                if (!it || it.kind !== "page") {
+                    log.push("crop: 当前不是内容页");
+                    break;
+                }
+                const total = (store.pageInfoOf(it)?.rotation ?? 0) + (it.rotation || 0);
+                const pageRect = displayRectToPageRect(display, total);
+                const ids = store.targetIds.length ? store.targetIds : [it.id];
+                store.applyCrop(ids, pageRect);
+                log.push(`crop:${arg} 总旋转=${total} -> 页面空间 ${JSON.stringify(pageRect)}`);
+                break;
+            }
+            // mask:x,y,w,h[,颜色[,不透明度]]
+            case "mask": {
+                const parts = arg.split(",");
+                const nums = parts.slice(0, 4).map(Number);
+                if (nums.length !== 4 || nums.some((n) => Number.isNaN(n))) {
+                    log.push(`mask 语法错误: ${arg}`);
+                    break;
+                }
+                const display: NormRect = { x: nums[0], y: nums[1], w: nums[2], h: nums[3] };
+                const color = parts[4] || "#FF0000";
+                const opacity = parts[5] !== undefined ? Number(parts[5]) : 1;
+                const it = store.currentItem;
+                if (!it || it.kind !== "page") {
+                    log.push("mask: 当前不是内容页");
+                    break;
+                }
+                const total = (store.pageInfoOf(it)?.rotation ?? 0) + (it.rotation || 0);
+                const pageRect = displayRectToPageRect(display, total);
+                const ids = store.targetIds.length ? store.targetIds : [it.id];
+                store.applyMask(ids, pageRect, color, opacity);
+                log.push(`mask:${arg} 总旋转=${total} -> 页面空间 ${JSON.stringify(pageRect)}`);
+                break;
+            }
+            case "clearops": {
+                store.clearOpsOn();
+                log.push("clearops");
                 break;
             }
             case "undo":

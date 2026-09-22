@@ -13,6 +13,8 @@ import {
     allIds,
     buildInitialSeq,
     buildPageItems,
+    clearOps,
+    cloneOps,
     createBlankItem,
     duplicateItems,
     indexOfId,
@@ -25,6 +27,7 @@ import {
     rotateItems,
     sameSeq,
     snapshot,
+    type NormRect,
     type WSItem,
 } from "../components/Workspace/model";
 
@@ -541,6 +544,42 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.syncDirty();
         },
 
+        // --- 裁剪 / 遮盖（Phase 5，非破坏式）-------------------------------
+        //
+        // 这些操作只写进清单里的 ops 字段，不碰任何文件；导出时才在 ws-build 里落到 PDF。
+        // 好处：撤销天然可用、可以随时改主意、同一份源文件能派生出多个不同结果。
+
+        /** 给若干页设置裁剪区（矩形已换算到页面未旋转空间）。 */
+        applyCrop(ids: string[], rect: NormRect) {
+            const idSet = new Set(ids);
+            const next = this.seq.map((it) => {
+                if (!idSet.has(it.id) || it.kind !== "page") return it;
+                const ops = cloneOps(it.ops) ?? {};
+                ops.crop = { ...rect };
+                return { ...it, ops };
+            });
+            this.apply(next, ids);
+        },
+
+        /** 给若干页追加一块遮盖。 */
+        applyMask(ids: string[], rect: NormRect, color: string, opacity: number) {
+            const idSet = new Set(ids);
+            const next = this.seq.map((it) => {
+                if (!idSet.has(it.id) || it.kind !== "page") return it;
+                const ops = cloneOps(it.ops) ?? {};
+                ops.masks = [...(ops.masks ?? []), { rect: { ...rect }, color, opacity }];
+                return { ...it, ops };
+            });
+            this.apply(next, ids);
+        },
+
+        /** 撤销若干页上的裁剪与遮盖。 */
+        clearOpsOn(ids?: string[]) {
+            const target = ids ?? this.targetIds;
+            if (!target.length) return;
+            this.apply(clearOps(this.seq, target));
+        },
+
         // --- 保存与导出（Phase 4）-----------------------------------------
 
         /**
@@ -574,7 +613,14 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 .map((it) =>
                     it.kind === "blank"
                         ? { kind: "blank", paper: it.paper, orientation: it.orientation }
-                        : { kind: "page", docId: it.docId, pageIndex: it.pageIndex, rotation: it.rotation }
+                        : {
+                              kind: "page",
+                              docId: it.docId,
+                              pageIndex: it.pageIndex,
+                              rotation: it.rotation,
+                              // 裁剪/遮盖随页面一起交给后端，Go 只做透传
+                              ...(it.ops ? { ops: it.ops } : {}),
+                          }
                 );
             return JSON.stringify(items);
         },

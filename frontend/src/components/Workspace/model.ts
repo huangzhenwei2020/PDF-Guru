@@ -10,6 +10,24 @@
 
 export type Rotation = 0 | 90 | 180 | 270;
 
+/**
+ * 归一化矩形：x/y/w/h 都是 0..1 的比例。
+ *
+ * **坐标空间是页面"未旋转"的那一面，原点在左上角。**
+ * 不用显示空间坐标，是因为 PDF 里的 CropBox 就定义在未旋转空间；
+ * 而页面固有旋转（扫描件常见 /Rotate 90）又是另一层，两者必须分开处理，
+ * 否则旋转过的页面上裁剪框会跑到对角去。
+ */
+export type NormRect = { x: number; y: number; w: number; h: number };
+
+/** 挂在单个页面上的非破坏式操作。导出时才落到 PDF，因此撤销天然可用。 */
+export type PageOps = {
+    /** 裁剪：导出后页面即为该区域 */
+    crop?: NormRect;
+    /** 遮盖：每项一个矩形与样式 */
+    masks?: { rect: NormRect; color: string; opacity: number }[];
+};
+
 /** 引用源文档中的某一页。 */
 export type PageItem = {
     kind: "page";
@@ -18,6 +36,8 @@ export type PageItem = {
     /** 源文档内的页序（0-based）。注意：与它在工作区里的位置无关。 */
     pageIndex: number;
     rotation: Rotation;
+    /** 裁剪 / 遮盖等非破坏式编辑 */
+    ops?: PageOps;
 };
 
 /** 插入的空白页。 */
@@ -160,9 +180,96 @@ export function indicesToRangeSpec(indices: number[]): string {
 /** 深拷贝一项并换上新 id（用于"复制页面"）。 */
 export function cloneItem(item: WSItem): WSItem {
     if (item.kind === "page") {
-        return { ...item, id: nextId("p") };
+        const copy: PageItem = { ...item, id: nextId("p") };
+        if (item.ops) copy.ops = cloneOps(item.ops);
+        return copy;
     }
     return { ...item, id: nextId("b") };
+}
+
+/**
+ * 深拷贝页面操作。
+ * 撤销栈存的是清单快照，若 ops 只做浅拷贝，之后改动会连带改到历史快照，
+ * 撤销就会"撤不回去"。
+ */
+export function cloneOps(ops?: PageOps): PageOps | undefined {
+    if (!ops) return undefined;
+    const out: PageOps = {};
+    if (ops.crop) out.crop = { ...ops.crop };
+    if (ops.masks) out.masks = ops.masks.map((m) => ({ rect: { ...m.rect }, color: m.color, opacity: m.opacity }));
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 坐标换算：显示空间 <-> 页面未旋转空间
+// ---------------------------------------------------------------------------
+
+function normRot(totalRotation: number): number {
+    return ((totalRotation % 360) + 360) % 360;
+}
+
+/**
+ * 把显示空间（旋转后）的归一化矩形换算到页面未旋转空间。
+ *
+ * 显示的旋转量 = 页面固有旋转 + 工作区附加旋转。画布上拖框拿到的是显示坐标，
+ * 必须换算之后才能存，否则旋转过的页面上裁剪会错位。
+ */
+export function displayRectToPageRect(r: NormRect, totalRotation: number): NormRect {
+    switch (normRot(totalRotation)) {
+        case 90:
+            return { x: r.y, y: 1 - r.x - r.w, w: r.h, h: r.w };
+        case 180:
+            return { x: 1 - r.x - r.w, y: 1 - r.y - r.h, w: r.w, h: r.h };
+        case 270:
+            return { x: 1 - r.y - r.h, y: r.x, w: r.h, h: r.w };
+        default:
+            return { x: r.x, y: r.y, w: r.w, h: r.h };
+    }
+}
+
+/** 反向换算：把页面空间的矩形换回显示空间，用于在画布上画出已有的裁剪框。 */
+export function pageRectToDisplayRect(r: NormRect, totalRotation: number): NormRect {
+    switch (normRot(totalRotation)) {
+        case 90:
+            return { x: 1 - r.y - r.h, y: r.x, w: r.h, h: r.w };
+        case 180:
+            return { x: 1 - r.x - r.w, y: 1 - r.y - r.h, w: r.w, h: r.h };
+        case 270:
+            return { x: r.y, y: 1 - r.x - r.w, w: r.h, h: r.w };
+        default:
+            return { x: r.x, y: r.y, w: r.w, h: r.h };
+    }
+}
+
+/** 由拖拽的两个角点构造归一化矩形，保证 x/y 是左上角。 */
+export function rectFromPoints(ax: number, ay: number, bx: number, by: number): NormRect {
+    return {
+        x: Math.min(ax, bx),
+        y: Math.min(ay, by),
+        w: Math.abs(bx - ax),
+        h: Math.abs(by - ay),
+    };
+}
+
+/** 把矩形裁到 [0,1] 范围内，并丢掉退化到没有面积的框。 */
+export function clampRect(r: NormRect, minSize = 0.01): NormRect | null {
+    const x0 = Math.max(0, Math.min(1, r.x));
+    const y0 = Math.max(0, Math.min(1, r.y));
+    const x1 = Math.max(0, Math.min(1, r.x + r.w));
+    const y1 = Math.max(0, Math.min(1, r.y + r.h));
+    const out = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    if (out.w < minSize || out.h < minSize) return null;
+    return out;
+}
+
+/** 清空某一项的裁剪/遮罩。 */
+export function clearOps(seq: WSItem[], ids: string[]): WSItem[] {
+    const idSet = new Set(ids);
+    return seq.map((it) => {
+        if (!idSet.has(it.id) || it.kind !== "page" || !it.ops) return it;
+        const { ops, ...rest } = it;
+        return rest as PageItem;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +390,8 @@ export function sameSeq(a: WSItem[], b: WSItem[]): boolean {
         if (x.id !== y.id || x.kind !== y.kind) return false;
         if (x.kind === "page" && y.kind === "page") {
             if (x.docId !== y.docId || x.pageIndex !== y.pageIndex || x.rotation !== y.rotation) return false;
+            // 裁剪/遮罩也要参与比较，否则"只改了裁剪"会被当成没变化而不进撤销栈
+            if (JSON.stringify(x.ops ?? null) !== JSON.stringify(y.ops ?? null)) return false;
         } else if (x.kind === "blank" && y.kind === "blank") {
             if (x.paper !== y.paper || x.orientation !== y.orientation) return false;
         }
@@ -290,7 +399,14 @@ export function sameSeq(a: WSItem[], b: WSItem[]): boolean {
     return true;
 }
 
-/** 供撤销栈保存/恢复的纯数据快照。 */
+/** 供撤销栈保存/恢复的纯数据快照。ops 必须深拷贝，否则历史快照会被后续编辑带改。 */
 export function snapshot(seq: WSItem[]): WSItem[] {
-    return seq.map((it) => ({ ...it }));
+    return seq.map((it) => {
+        if (it.kind === "page" && it.ops) {
+            const copy: PageItem = { ...it };
+            copy.ops = cloneOps(it.ops);
+            return copy;
+        }
+        return { ...it };
+    });
 }
