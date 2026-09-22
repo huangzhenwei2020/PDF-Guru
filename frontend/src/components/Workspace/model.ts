@@ -26,6 +26,8 @@ export type PageOps = {
     crop?: NormRect;
     /** 遮盖：每项一个矩形与样式 */
     masks?: { rect: NormRect; color: string; opacity: number }[];
+    /** 导出时删除该页的全部批注 */
+    removeAnnots?: boolean;
 };
 
 /** 引用源文档中的某一页。 */
@@ -197,6 +199,7 @@ export function cloneOps(ops?: PageOps): PageOps | undefined {
     const out: PageOps = {};
     if (ops.crop) out.crop = { ...ops.crop };
     if (ops.masks) out.masks = ops.masks.map((m) => ({ rect: { ...m.rect }, color: m.color, opacity: m.opacity }));
+    if (ops.removeAnnots) out.removeAnnots = true;
     return out;
 }
 

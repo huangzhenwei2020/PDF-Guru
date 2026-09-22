@@ -49,6 +49,14 @@
                     导出
                 </a-button>
             </a-tooltip>
+            <a-tooltip title="水印 / 页码 / 页眉页脚（导出时应用，不改源文件）">
+                <a-button :disabled="!store.seq.length" @click="decorVisible = true">
+                    <template #icon>
+                        <font-size-outlined />
+                    </template>
+                    页面装饰
+                </a-button>
+            </a-tooltip>
 
             <a-divider type="vertical" />
 
@@ -136,6 +144,9 @@
                             style="width: 74px" title="不透明度" />
                     </template>
                     <a-button size="small" :disabled="!canEdit" @click="store.clearOpsOn()">清除操作</a-button>
+                    <a-button size="small" :disabled="!canEdit" @click="store.toggleRemoveAnnots()">
+                        {{ removeAnnotsMarked ? "取消删除批注" : "删除批注" }}
+                    </a-button>
                     <span v-if="mode !== 'view'" class="ws-modehint">
                         {{ mode === 'crop' ? '在页面上拖拽框出要保留的区域' : '在页面上拖拽框出要遮盖的区域' }}
                         <template v-if="store.targetIds.length > 1">（将应用到选中的 {{ store.targetIds.length }} 页）</template>
@@ -263,11 +274,112 @@
                 <span v-if="exportScope === 'selected'">（只导出选中的页面，工作区其余内容不受影响）</span>
             </div>
         </a-modal>
+        <!-- 页面装饰：导出期设置 -->
+        <a-modal v-model:visible="decorVisible" title="页面装饰" :width="660" ok-text="完成" cancel-text="关闭">
+            <a-alert type="info" show-icon
+                message="这些都是导出期设置，不会改动源文件。页码里的「共 N 页」按导出后的实际页数计算，所以必须是导出时才能确定。" />
+
+            <!-- 水印 -->
+            <div class="decor-sec">
+                <a-checkbox v-model:checked="store.decor.watermark.enabled">水印</a-checkbox>
+                <div v-if="store.decor.watermark.enabled" class="decor-body">
+                    <a-form layout="inline">
+                        <a-form-item label="文字">
+                            <a-input v-model:value="store.decor.watermark.text" style="width: 130px" />
+                        </a-form-item>
+                        <a-form-item label="颜色">
+                            <a-input v-model:value="store.decor.watermark.color" style="width: 84px" />
+                        </a-form-item>
+                        <a-form-item label="字号">
+                            <a-input-number v-model:value="store.decor.watermark.fontSize" :min="8" :max="200"
+                                style="width: 76px" />
+                        </a-form-item>
+                        <a-form-item label="角度">
+                            <a-input-number v-model:value="store.decor.watermark.angle" :min="-90" :max="90"
+                                style="width: 76px" />
+                        </a-form-item>
+                        <a-form-item label="不透明度">
+                            <a-input-number v-model:value="store.decor.watermark.opacity" :min="0.05" :max="1"
+                                :step="0.05" style="width: 76px" />
+                        </a-form-item>
+                    </a-form>
+                    <div class="decor-row">
+                        <a-checkbox v-model:checked="store.decor.watermark.multiple">平铺整页</a-checkbox>
+                        <a-checkbox v-model:checked="store.decor.watermark.scopeSelected">
+                            只加在选中页{{ scopeHint }}
+                        </a-checkbox>
+                    </div>
+                </div>
+            </div>
+
+            <a-divider style="margin: 10px 0" />
+
+            <!-- 页码 -->
+            <div class="decor-sec">
+                <a-checkbox v-model:checked="store.decor.pageNumber.enabled">页码</a-checkbox>
+                <div v-if="store.decor.pageNumber.enabled" class="decor-body">
+                    <a-form layout="inline">
+                        <a-form-item label="格式">
+                            <a-input v-model:value="store.decor.pageNumber.format" style="width: 190px"
+                                placeholder="第%p页/共%P页（%p=页码，%P=总页数）" />
+                        </a-form-item>
+                        <a-form-item label="位置">
+                            <a-radio-group v-model:value="store.decor.pageNumber.pos" button-style="solid">
+                                <a-radio-button value="header">页眉</a-radio-button>
+                                <a-radio-button value="footer">页脚</a-radio-button>
+                            </a-radio-group>
+                        </a-form-item>
+                        <a-form-item label="对齐">
+                            <a-radio-group v-model:value="store.decor.pageNumber.align" button-style="solid">
+                                <a-radio-button value="left">左</a-radio-button>
+                                <a-radio-button value="center">中</a-radio-button>
+                                <a-radio-button value="right">右</a-radio-button>
+                            </a-radio-group>
+                        </a-form-item>
+                    </a-form>
+                    <div class="decor-row">
+                        <a-checkbox v-model:checked="store.decor.pageNumber.scopeSelected">
+                            只加在选中页{{ scopeHint }}
+                        </a-checkbox>
+                    </div>
+                </div>
+            </div>
+
+            <a-divider style="margin: 10px 0" />
+
+            <!-- 页眉页脚 -->
+            <div class="decor-sec">
+                <a-checkbox v-model:checked="store.decor.headerFooter.enabled">页眉 / 页脚（固定文字）</a-checkbox>
+                <div v-if="store.decor.headerFooter.enabled" class="decor-body">
+                    <a-row :gutter="6" style="margin-bottom: 6px;">
+                        <a-col :span="8"><a-input v-model:value="store.decor.headerFooter.headerLeft"
+                                placeholder="页眉左" /></a-col>
+                        <a-col :span="8"><a-input v-model:value="store.decor.headerFooter.headerCenter"
+                                placeholder="页眉中" /></a-col>
+                        <a-col :span="8"><a-input v-model:value="store.decor.headerFooter.headerRight"
+                                placeholder="页眉右" /></a-col>
+                    </a-row>
+                    <a-row :gutter="6">
+                        <a-col :span="8"><a-input v-model:value="store.decor.headerFooter.footerLeft"
+                                placeholder="页脚左" /></a-col>
+                        <a-col :span="8"><a-input v-model:value="store.decor.headerFooter.footerCenter"
+                                placeholder="页脚中" /></a-col>
+                        <a-col :span="8"><a-input v-model:value="store.decor.headerFooter.footerRight"
+                                placeholder="页脚右" /></a-col>
+                    </a-row>
+                    <div class="decor-row">
+                        <a-checkbox v-model:checked="store.decor.headerFooter.scopeSelected">
+                            只加在选中页{{ scopeHint }}
+                        </a-checkbox>
+                    </div>
+                </div>
+            </div>
+        </a-modal>
     </div>
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, onMounted, onUnmounted, ref } from 'vue';
+import { computed, defineComponent, onMounted, onUnmounted, ref, watch } from 'vue';
 import { message, Modal } from 'ant-design-vue';
 import {
     CopyOutlined,
@@ -276,6 +388,7 @@ import {
     ExportOutlined,
     FileOutlined,
     FolderOpenOutlined,
+    FontSizeOutlined,
     PlusOutlined,
     RedoOutlined,
     RotateLeftOutlined,
@@ -306,6 +419,7 @@ export default defineComponent({
         ExportOutlined,
         FileOutlined,
         FolderOpenOutlined,
+        FontSizeOutlined,
         PlusOutlined,
         RedoOutlined,
         RotateLeftOutlined,
@@ -694,6 +808,24 @@ export default defineComponent({
             }
         };
 
+        // --- 页面装饰（导出期设置）----------------------------------------
+
+        const decorVisible = ref(false);
+
+        // 装饰改动也要算"未保存"，否则改了水印却看不到提示、关窗口也不拦。
+        // 直接改 store.decor 不会触发 syncDirty，所以这里监听。
+        watch(
+            () => store.decor,
+            () => store.syncDirty(),
+            { deep: true }
+        );
+
+        const removeAnnotsMarked = computed(() => store.removeAnnotsCount() > 0);
+
+        const scopeHint = computed(() =>
+            store.selected.length ? `（已选 ${store.selected.length} 页）` : '（当前没有选中页，将不生效）'
+        );
+
         // --- 其它交互 -----------------------------------------------------
 
         const onSelect = (id: string, mode: string) => {
@@ -775,7 +907,12 @@ export default defineComponent({
                     await store.open(auto);
                     const script = await store.autoOps();
                     if (script) {
-                        const log = await runOps(store, script, { openExport });
+                        const log = await runOps(store, script, {
+                            openExport,
+                            openDecor: () => {
+                                decorVisible.value = true;
+                            },
+                        });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
                         if (store.current) await store.focusItem(store.current);
@@ -842,6 +979,10 @@ export default defineComponent({
             exportCompress,
             exportBackup,
             exportCount,
+            // 页面装饰
+            decorVisible,
+            removeAnnotsMarked,
+            scopeHint,
         };
     },
 });
@@ -1000,6 +1141,23 @@ export default defineComponent({
 
 .ws-err {
     color: #cf1322;
+}
+
+/* 页面装饰弹窗 */
+.decor-sec {
+    margin-top: 12px;
+}
+
+.decor-body {
+    margin: 8px 0 0 24px;
+    padding-left: 12px;
+    border-left: 3px solid #f0f0f0;
+}
+
+.decor-row {
+    display: flex;
+    gap: 18px;
+    margin-top: 6px;
 }
 
 .ws-diag {

@@ -17,13 +17,17 @@
 
 import json
 import os
+import shutil
+import tempfile
 import traceback
 from pathlib import Path
 
 import fitz
 import utils
 from constants import cmd_output_path
+from header_and_footer import create_header_and_footer_mask
 from loguru import logger
+from watermark import create_text_wartmark
 
 # 缩略图清单文件名模板。Go 侧会读取它来拼 URL。
 # 按宽度分文件，避免"缩略图轨道"与"大图预览"并发渲染时互相覆盖清单。
@@ -122,6 +126,127 @@ def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, man
         utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
 
 
+def _overlay_via_mask(width, height, content_list, tmpdir, tag,
+                      font_family=None, font_size=10, font_color="#000000",
+                      opacity=1, unit="cm", margin_bbox=None):
+    """生成一页透明的覆盖层 PDF，返回其路径。
+
+    页眉页脚与页码都这么做：先用 reportlab 画一张单页 PDF，再 show_pdf_page 叠上去。
+    比逐字算坐标省事得多，也与上游既有实现保持一致。
+    """
+    path = os.path.join(tmpdir, f"ov-{tag}.pdf")
+    create_header_and_footer_mask(
+        width=width, height=height, content_list=content_list,
+        margin_bbox=margin_bbox, font_family=font_family, font_size=font_size,
+        font_color=font_color, opacity=opacity, unit=unit, output_path=path)
+    return path
+
+
+def _apply_decor(writer, options, tmpdir):
+    """应用装饰类选项：水印、页码、页眉页脚。
+
+    这些**必须**放在导出阶段，而不是编辑时：页码要写"第 X 页 / 共 N 页"，
+    而 N 只有把清单全部拼完之后才存在。
+    scope 是导出文档里的 0-based 位置，由前端根据当前选区算好传进来，
+    这里不做任何选区判断，保持职责单一。
+    """
+    total = writer.page_count
+    if total == 0:
+        return
+
+    def targets(scope):
+        # 区分两种情况：没给 scope = 全部页；给了空数组 = 哪一页都不加。
+        # 若把空数组也当成"全部"，用户在没选中任何页时会被静默地给整份文档加上水印。
+        if scope is None:
+            return list(range(total))
+        return [i for i in scope if 0 <= i < total]
+
+    # --- 水印（各页相同，按纸张尺寸缓存覆盖层）---
+    wm = options.get("watermark")
+    if wm and (wm.get("text") or "").strip():
+        rgb = tuple(v / 255.0 for v in utils.hex_to_rgb(wm.get("color") or "#000000"))
+        cache = {}
+        for i in targets(wm.get("scope")):
+            page = writer[i]
+            w, h = page.rect.width, page.rect.height
+            key = (round(w, 1), round(h, 1))
+            if key not in cache:
+                path = os.path.join(tmpdir, f"wm-{key[0]}x{key[1]}.pdf")
+                create_text_wartmark(
+                    wm_text=wm.get("text"), width=w, height=h, output_path=path,
+                    font=wm.get("font") or "msyh.ttc",
+                    fontsize=float(wm.get("fontSize", 40)),
+                    angle=float(wm.get("angle", 30)),
+                    text_stroke_color_rgb=(0, 0, 0),
+                    text_fill_color_rgb=rgb,
+                    text_fill_alpha=float(wm.get("opacity", 0.3)),
+                    num_lines=int(wm.get("numLines", 1)),
+                    line_spacing=float(wm.get("lineSpacing", 1)),
+                    word_spacing=float(wm.get("wordSpacing", 1)),
+                    x_offset=float(wm.get("xOffset", 0)),
+                    y_offset=float(wm.get("yOffset", 0)),
+                    multiple_mode=bool(wm.get("multiple", True)),
+                )
+                cache[key] = path
+            ov = fitz.open(cache[key])
+            page.show_pdf_page(page.rect, ov, 0, overlay=True)
+            page.clean_contents()
+            ov.close()
+
+    # --- 页眉页脚（各页内容相同，按纸张尺寸缓存）---
+    hf = options.get("headerFooter")
+    if hf:
+        content = [
+            hf.get("headerLeft") or "", hf.get("headerCenter") or "", hf.get("headerRight") or "",
+            hf.get("footerLeft") or "", hf.get("footerCenter") or "", hf.get("footerRight") or "",
+        ]
+        if any(c.strip() for c in content):
+            cache = {}
+            for i in targets(hf.get("scope")):
+                page = writer[i]
+                w, h = page.rect.width, page.rect.height
+                key = (round(w, 1), round(h, 1))
+                if key not in cache:
+                    cache[key] = _overlay_via_mask(
+                        w, h, content, tmpdir, f"hf-{key[0]}x{key[1]}",
+                        font_family=hf.get("fontFamily"), font_size=float(hf.get("fontSize", 10)),
+                        font_color=hf.get("fontColor") or "#000000",
+                        opacity=float(hf.get("opacity", 1)))
+                ov = fitz.open(cache[key])
+                page.show_pdf_page(page.rect, ov, 0, overlay=True)
+                page.clean_contents()
+                ov.close()
+
+    # --- 页码（每页内容都不同，只能逐页生成）---
+    pn = options.get("pageNumber")
+    if pn:
+        fmt = pn.get("format") or "第%p页"
+        pos = pn.get("pos") or "footer"
+        align = pn.get("align") or "right"
+        start = int(pn.get("start", 0))
+        slot = ({"left": 0, "center": 1, "right": 2} if pos == "header"
+                else {"left": 3, "center": 4, "right": 5})
+        targets_list = targets(pn.get("scope"))
+        for i in targets_list:
+            page = writer[i]
+            # 页码标识的是"这一页在文档中的位置"，而不是"被编号的第几个"：
+            # 只给第 2..5 页加页码时，它们应该读作 2,3,4,5 而不是 1,2,3,4。
+            # start 用来整体偏移（例如封面不编号时把正文从 1 开始）。
+            pno = start + i + 1
+            text = fmt.replace("%p", str(pno)).replace("%P", str(total))
+            content = [""] * 6
+            content[slot.get(align, 5)] = text
+            path = _overlay_via_mask(
+                page.rect.width, page.rect.height, content, tmpdir, f"pn-{i}",
+                font_family=pn.get("fontFamily"), font_size=float(pn.get("fontSize", 10)),
+                font_color=pn.get("fontColor") or "#000000",
+                opacity=float(pn.get("opacity", 1)))
+            ov = fitz.open(path)
+            page.show_pdf_page(page.rect, ov, 0, overlay=True)
+            page.clean_contents()
+            ov.close()
+
+
 def workspace_build(plan_path: str, output_path: str, compress: bool = False):
     """按清单合成 PDF —— 工作区所有编辑真正落盘的地方。
 
@@ -174,6 +299,11 @@ def workspace_build(plan_path: str, output_path: str, compress: bool = False):
                 # 尺寸必须取 mediabox —— page.rect 是旋转后的视图尺寸，
                 # 用它换算会让旋转过的页面上裁剪框跑到别处。
                 ops = item.get("ops") or {}
+                if ops.get("removeAnnots"):
+                    # 先物化成列表再逐条删：边遍历生成器边删除并不可靠
+                    for an in list(newpage.annots() or []):
+                        newpage.delete_annot(an)
+
                 crop = ops.get("crop")
                 masks = ops.get("masks") or []
                 if crop or masks:
@@ -211,6 +341,15 @@ def workspace_build(plan_path: str, output_path: str, compress: bool = False):
 
             if writer.page_count == 0:
                 raise ValueError("清单里没有任何页面，已取消导出")
+
+            # 装饰类选项只能在这里做：页码要写"共 N 页"，N 到这一刻才确定
+            options = plan.get("options") or {}
+            if options:
+                tmpdir = tempfile.mkdtemp(prefix="pdfguru-ws-")
+                try:
+                    _apply_decor(writer, options, tmpdir)
+                finally:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
 
             writer.save(tmp, garbage=4 if compress else 3, deflate=True, clean=bool(compress))
         finally:

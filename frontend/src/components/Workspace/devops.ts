@@ -108,6 +108,35 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 }
                 break;
             }
+            // --- 导出期装饰（Phase 5 下半）---
+            case "watermark": {
+                store.decor.watermark.enabled = true;
+                if (arg) store.decor.watermark.text = arg;
+                log.push(`watermark:${store.decor.watermark.text}`);
+                break;
+            }
+            case "pagenum": {
+                store.decor.pageNumber.enabled = true;
+                if (arg) store.decor.pageNumber.format = arg;
+                log.push(`pagenum:${store.decor.pageNumber.format}`);
+                break;
+            }
+            case "hdr": {
+                store.decor.headerFooter.enabled = true;
+                store.decor.headerFooter.headerCenter = arg;
+                log.push(`hdr:${arg}`);
+                break;
+            }
+            case "rmannot": {
+                store.toggleRemoveAnnots();
+                log.push("rmannot");
+                break;
+            }
+            case "decordlg": {
+                ui?.openDecor?.();
+                log.push("decordlg");
+                break;
+            }
             // exportdlg —— 打开导出弹窗（弹窗同样是截图验证的对象，靠模拟点击去猜
             // 按钮像素坐标既脆弱又慢，直接调用更可靠）
             case "exportdlg": {

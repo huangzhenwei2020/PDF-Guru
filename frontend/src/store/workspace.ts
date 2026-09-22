@@ -80,6 +80,81 @@ export const WS_PREVIEW_WIDTH = PREVIEW_WIDTH;
 
 export type SelectMode = "replace" | "toggle" | "range";
 
+/**
+ * 导出期装饰：水印、页码、页眉页脚。
+ *
+ * 它们与裁剪/遮盖不同，**不能**挂在单个页面项上——页码要写"第 X 页 / 共 N 页"，
+ * 而 N 只有把清单全部拼完之后才存在，所以只能在导出时应用。
+ * 作用域因此用"全部 / 选中"表示，并在导出那一刻把选中页解析成输出文档里的下标。
+ */
+export type DecorState = {
+    watermark: {
+        enabled: boolean;
+        text: string;
+        color: string;
+        fontSize: number;
+        angle: number;
+        opacity: number;
+        multiple: boolean;
+        scopeSelected: boolean;
+    };
+    pageNumber: {
+        enabled: boolean;
+        format: string;
+        pos: "header" | "footer";
+        align: "left" | "center" | "right";
+        fontSize: number;
+        start: number;
+        scopeSelected: boolean;
+    };
+    headerFooter: {
+        enabled: boolean;
+        headerLeft: string;
+        headerCenter: string;
+        headerRight: string;
+        footerLeft: string;
+        footerCenter: string;
+        footerRight: string;
+        fontSize: number;
+        scopeSelected: boolean;
+    };
+};
+
+function defaultDecor(): DecorState {
+    return {
+        watermark: {
+            enabled: false,
+            text: "机密",
+            color: "#FF0000",
+            fontSize: 40,
+            angle: 30,
+            opacity: 0.3,
+            multiple: true,
+            scopeSelected: false,
+        },
+        pageNumber: {
+            enabled: false,
+            format: "第%p页/共%P页",
+            pos: "footer",
+            align: "right",
+            fontSize: 10,
+            start: 0,
+            scopeSelected: false,
+        },
+        headerFooter: {
+            enabled: false,
+            headerLeft: "",
+            headerCenter: "",
+            headerRight: "",
+            footerLeft: "",
+            footerCenter: "",
+            footerRight: "",
+            fontSize: 10,
+            scopeSelected: false,
+        },
+    };
+}
+
 /** 文件名（去掉目录），用于界面上的简短标题 */
 function baseName(p: string): string {
     const parts = p.split(/[\\/]/);
@@ -112,10 +187,12 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         loading: false,
         previewLoading: false,
         error: "",
-        /** 是否有未保存的更改。判定方式见 syncDirty：与上次保存时的快照比对 */
+        /** 导出期装饰（水印/页码/页眉页脚）。改动同样算"编辑"，要进未保存判定 */
+        decor: defaultDecor(),
+        /** 是否有未保存的更改。判定方式见 syncDirty：与上次保存时的指纹比对 */
         dirty: false,
-        /** 上次保存/打开时的清单快照，用于精确判断"未保存" */
-        savedSeqJSON: "",
+        /** 上次保存/打开时的状态指纹（清单 + 装饰），用于精确判断"未保存" */
+        savedSig: "",
         saving: false,
     }),
 
@@ -216,7 +293,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 future: [],
                 error: "",
                 dirty: false,
-                savedSeqJSON: "",
+                savedSig: "",
+                decor: defaultDecor(),
             });
         },
 
@@ -580,15 +658,54 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.apply(clearOps(this.seq, target));
         },
 
+        /**
+         * 标记若干页在导出时删掉全部批注。
+         * 同样是"只改清单、导出才落盘"，因此可以撤销。
+         * （按批注类型精细删除仍留在「工具箱」里。）
+         */
+        toggleRemoveAnnots(ids?: string[]) {
+            const target = ids ?? this.targetIds;
+            if (!target.length) return;
+            const idSet = new Set(target);
+            // 若全都已标记，则整体取消；否则整体标记 —— 一个按钮两种状态，符合直觉
+            const allMarked = this.seq
+                .filter((it) => idSet.has(it.id) && it.kind === "page")
+                .every((it) => it.kind === "page" && it.ops?.removeAnnots);
+            const next = this.seq.map((it) => {
+                if (!idSet.has(it.id) || it.kind !== "page") return it;
+                const ops = cloneOps(it.ops) ?? {};
+                if (allMarked) delete ops.removeAnnots;
+                else ops.removeAnnots = true;
+                if (!ops.crop && !ops.masks && !ops.removeAnnots) {
+                    const { ops: _drop, ...rest } = it;
+                    return rest as typeof it;
+                }
+                return { ...it, ops };
+            });
+            this.apply(next, target);
+        },
+
+        /** 目标页里有多少已标记"删除批注"。 */
+        removeAnnotsCount(ids?: string[]): number {
+            const target = new Set(ids ?? this.targetIds);
+            return this.seq.filter(
+                (it) => target.has(it.id) && it.kind === "page" && it.ops?.removeAnnots
+            ).length;
+        },
+
         // --- 保存与导出（Phase 4）-----------------------------------------
 
+        /** 状态指纹：清单 + 装饰。装饰改了也算未保存，否则水印会悄悄丢掉。 */
+        signature(): string {
+            return JSON.stringify({ seq: this.seq, decor: this.decor });
+        },
+
         /**
-         * 用"与上次保存时的快照比对"来判断是否有未保存的更改。
+         * 用"与上次保存时的指纹比对"来判断是否有未保存的更改。
          * 这样撤销回到已保存的状态时，标记会自动消失，而不是一直亮着。
          */
         syncDirty() {
-            const now = JSON.stringify(this.seq);
-            const dirty = now !== this.savedSeqJSON;
+            const dirty = this.signature() !== this.savedSig;
             if (dirty !== this.dirty) {
                 this.dirty = dirty;
                 // 同步给 Go，供关闭窗口前拦截使用；失败不影响正常编辑
@@ -597,9 +714,68 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         },
 
         markSaved() {
-            this.savedSeqJSON = JSON.stringify(this.seq);
+            this.savedSig = this.signature();
             this.dirty = false;
             WorkspaceSetDirty(false).catch(() => undefined);
+        },
+
+        /**
+         * 组装导出请求的 options。
+         * scopeSelected 为真时，把选中页解析成**输出文档里的下标**；
+         * 为空数组表示"哪一页都不加"（与缺省的"全部"是不同的语义）。
+         */
+        decorOptions(): Record<string, unknown> {
+            const opts: Record<string, unknown> = {};
+            const scopeOf = (useSelected: boolean): number[] | null => {
+                if (!useSelected) return null;
+                const idx: number[] = [];
+                this.seq.forEach((it, i) => {
+                    if (this.selected.includes(it.id)) idx.push(i);
+                });
+                return idx;
+            };
+            const d = this.decor;
+
+            if (d.watermark.enabled && d.watermark.text.trim()) {
+                const w: Record<string, unknown> = {
+                    text: d.watermark.text,
+                    color: d.watermark.color,
+                    fontSize: d.watermark.fontSize,
+                    angle: d.watermark.angle,
+                    opacity: d.watermark.opacity,
+                    multiple: d.watermark.multiple,
+                };
+                const sc = scopeOf(d.watermark.scopeSelected);
+                if (sc) w.scope = sc;
+                opts.watermark = w;
+            }
+            if (d.pageNumber.enabled) {
+                const p: Record<string, unknown> = {
+                    format: d.pageNumber.format,
+                    pos: d.pageNumber.pos,
+                    align: d.pageNumber.align,
+                    fontSize: d.pageNumber.fontSize,
+                    start: d.pageNumber.start,
+                };
+                const sc = scopeOf(d.pageNumber.scopeSelected);
+                if (sc) p.scope = sc;
+                opts.pageNumber = p;
+            }
+            if (d.headerFooter.enabled) {
+                const h: Record<string, unknown> = {
+                    headerLeft: d.headerFooter.headerLeft,
+                    headerCenter: d.headerFooter.headerCenter,
+                    headerRight: d.headerFooter.headerRight,
+                    footerLeft: d.headerFooter.footerLeft,
+                    footerCenter: d.headerFooter.footerCenter,
+                    footerRight: d.headerFooter.footerRight,
+                    fontSize: d.headerFooter.fontSize,
+                };
+                const sc = scopeOf(d.headerFooter.scopeSelected);
+                if (sc) h.scope = sc;
+                opts.headerFooter = h;
+            }
+            return opts;
         },
 
         /**
@@ -634,12 +810,11 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.saving = true;
             this.error = "";
             try {
-                const msg: string = await WorkspaceBuild(
-                    this.itemsPayload(scope),
-                    outFile,
-                    compress,
-                    backup
-                );
+                const payload = JSON.stringify({
+                    items: JSON.parse(this.itemsPayload(scope)),
+                    options: this.decorOptions(),
+                });
+                const msg: string = await WorkspaceBuild(payload, outFile, compress, backup);
                 // 输出文件若正好是某个来源，那份来源的内容已经被改写，
                 // 清单里指向它的页下标就失效了，必须重新加载，否则后续导出会串页。
                 const hitSource = Object.values(this.sources).some((s) => s.path === outFile);

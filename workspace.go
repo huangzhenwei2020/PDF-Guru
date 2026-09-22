@@ -324,9 +324,13 @@ type wsPlanBlank struct {
 
 // WorkspaceBuild 把当前清单落成 PDF，返回一句可直接展示给用户的结果说明。
 //
+// payloadJSON 形如 {"items":[...],"options":{...}}：
+// items 是页面清单（只含 docId，真实路径由 Go 解析），
+// options 是导出期装饰（水印/页码/页眉页脚），Go 不理解其结构、原样透传给 Python。
+//
 // makeBackup 为真且目标已存在时，会先把原文件备份成 .bak。备份刻意"只留第一份"：
 // 已有 .bak 就不再覆盖，这样连续保存不会把最初那一版冲掉。
-func (a *App) WorkspaceBuild(itemsJSON string, outFile string, compress bool, makeBackup bool) (string, error) {
+func (a *App) WorkspaceBuild(payloadJSON string, outFile string, compress bool, makeBackup bool) (string, error) {
 	wsInit()
 
 	if strings.TrimSpace(outFile) == "" {
@@ -336,10 +340,14 @@ func (a *App) WorkspaceBuild(itemsJSON string, outFile string, compress bool, ma
 		return "", errors.New("输出路径必须是绝对路径")
 	}
 
-	var items []wsBuildItem
-	if err := json.Unmarshal([]byte(itemsJSON), &items); err != nil {
-		return "", errors.Wrap(err, "解析页面清单失败")
+	var payload struct {
+		Items   []wsBuildItem   `json:"items"`
+		Options json.RawMessage `json:"options"`
 	}
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return "", errors.Wrap(err, "解析导出请求失败")
+	}
+	items := payload.Items
 	if len(items) == 0 {
 		return "", errors.New("工作区里没有任何页面")
 	}
@@ -393,8 +401,9 @@ func (a *App) WorkspaceBuild(itemsJSON string, outFile string, compress bool, ma
 		return "", errors.Wrap(err, "创建清单目录失败")
 	}
 	planData, err := json.Marshal(struct {
-		Pages []wsPlanPage `json:"pages"`
-	}{Pages: pages})
+		Pages   []wsPlanPage    `json:"pages"`
+		Options json.RawMessage `json:"options,omitempty"`
+	}{Pages: pages, Options: payload.Options})
 	if err != nil {
 		return "", errors.Wrap(err, "生成导出清单失败")
 	}
