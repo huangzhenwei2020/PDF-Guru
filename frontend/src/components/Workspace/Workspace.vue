@@ -8,61 +8,156 @@
                 </template>
                 打开 PDF
             </a-button>
-            <span class="ws-path" :title="store.path">{{ store.path || "尚未打开文档" }}</span>
-            <span class="ws-meta" v-if="store.pageCount">{{ store.pageCount }} 页</span>
+
+            <a-divider type="vertical" />
+
+            <a-tooltip title="撤销 (Ctrl+Z)">
+                <a-button :disabled="!store.canUndo" @click="store.undo()">
+                    <template #icon>
+                        <undo-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+            <a-tooltip title="重做 (Ctrl+Y)">
+                <a-button :disabled="!store.canRedo" @click="store.redo()">
+                    <template #icon>
+                        <redo-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+
+            <a-divider type="vertical" />
+
+            <a-tooltip title="逆时针旋转 90° ([)">
+                <a-button :disabled="!canEdit" @click="store.doRotate(-90)">
+                    <template #icon>
+                        <rotate-left-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+            <a-tooltip title="顺时针旋转 90° (])">
+                <a-button :disabled="!canEdit" @click="store.doRotate(90)">
+                    <template #icon>
+                        <rotate-right-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+            <a-tooltip title="复制所选页面 (Ctrl+D)">
+                <a-button :disabled="!canEdit" @click="store.doDuplicate()">
+                    <template #icon>
+                        <copy-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+            <a-tooltip title="删除所选页面 (Delete)">
+                <a-button danger :disabled="!canEdit" @click="store.doDelete()">
+                    <template #icon>
+                        <delete-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+
+            <a-divider type="vertical" />
+
+            <a-button size="small" :disabled="!store.seq.length" @click="store.selectAll()">全选</a-button>
+            <a-button size="small" :disabled="!store.selected.length" @click="store.clearSelection()">取消选择</a-button>
+
+            <span class="ws-spacer"></span>
             <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
             <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
+            <span class="ws-meta" v-if="store.pageCount">
+                {{ store.seq.length }} 页
+                <template v-if="store.selected.length"> · 已选 {{ store.selected.length }}</template>
+            </span>
         </div>
 
-        <a-alert v-if="store.error" type="error" show-icon :message="store.error" class="ws-alert" />
+        <a-alert v-if="store.error" type="error" show-icon closable :message="store.error" class="ws-alert"
+            @close="store.error = ''" />
 
-        <!-- 主体：左缩略图轨道 + 右大图 -->
+        <!-- 主体：左轨道 + 右画布 -->
         <div class="ws-body">
-            <div class="ws-rail">
-                <div v-if="store.loading" class="ws-hint">正在解析文档…</div>
-                <div v-else-if="!store.thumbs.length" class="ws-hint">打开一个 PDF 后<br />这里会列出每一页</div>
-                <div v-for="t in store.thumbs" :key="t.pageIndex" class="ws-thumb"
-                    :class="{ 'ws-thumb-active': t.pageIndex === store.current }" @click="store.selectPage(t.pageIndex)">
-                    <img :src="url(t.url)" :width="t.width" :height="t.height" alt="" @error="onImgError" />
-                    <span class="ws-thumb-no">{{ t.pageIndex + 1 }}</span>
+            <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" @select="onSelect"
+                @move="onMove" />
+
+            <div ref="canvasRef" class="ws-canvas">
+                <div v-if="store.previewLoading" class="ws-hint">渲染中…</div>
+
+                <!-- 空白页 -->
+                <div v-else-if="view && view.blank" class="ws-blank">
+                    <file-outlined />
+                    <div>空白页</div>
+                    <small>导出时按所选纸张插入</small>
+                </div>
+
+                <!-- 页面预览：旋转与缩放分层处理，每层只做一件事，
+                     避免多个 transform 揉在一起后难以推理 -->
+                <div v-else-if="view" class="pv-fit" :style="{ width: view.fitW + 'px', height: view.fitH + 'px' }">
+                    <div class="pv-box" :style="{
+                        width: view.dispW + 'px',
+                        height: view.dispH + 'px',
+                        transform: `scale(${view.scale})`,
+                    }">
+                        <img :src="url(store.preview!.url)" :style="{
+                            width: view.imgW + 'px',
+                            height: view.imgH + 'px',
+                            transform: `translate(-50%, -50%) rotate(${view.rot}deg)`,
+                        }" alt="" @error="onImgError" />
+                    </div>
+                </div>
+
+                <div v-else class="ws-hint">
+                    {{ store.seq.length ? "选择左侧任意一页查看大图" : "打开一个 PDF 开始" }}
                 </div>
             </div>
-
-            <div class="ws-canvas">
-                <div v-if="store.previewLoading" class="ws-hint">渲染中…</div>
-                <img v-else-if="store.preview" class="ws-preview" :src="url(store.preview.url)" alt=""
-                    @error="onImgError" />
-                <div v-else class="ws-hint">选择左侧任意一页查看大图</div>
-            </div>
         </div>
 
-        <!-- 诊断条：供图机制是本阶段最大的技术风险，把关键状态直接摊在界面上，
-             出问题时截图即可定位，不必去翻日志。 -->
+        <!-- 诊断条：供图是本方案的地基，把关键状态摊在界面上，出问题截图即可定位 -->
         <div class="ws-diag">
-            docId={{ store.docId || "-" }} · protocol={{ protocol }} · origin={{ origin }} ·
-            urlMode={{ urlMode }} · 缩略图={{ store.thumbs.length }} · 缓存={{ store.cacheRoot || "-" }}
+            docId={{ store.docId || "-" }} · origin={{ origin }} · urlMode={{ urlMode }} ·
+            清单={{ store.seq.length }} · 已选={{ store.selected.length }} · 撤销栈={{ store.past.length }} ·
+            重做栈={{ store.future.length }} · 当前={{ currentPos }} {{ autoLog }}
         </div>
     </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted } from 'vue';
+import { computed, defineComponent, onMounted, onUnmounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
-import { FolderOpenOutlined } from '@ant-design/icons-vue';
-import { SelectFile, WorkspaceAutoOpenPath } from '../../../wailsjs/go/main/App';
+import {
+    CopyOutlined,
+    DeleteOutlined,
+    FileOutlined,
+    FolderOpenOutlined,
+    RedoOutlined,
+    RotateLeftOutlined,
+    RotateRightOutlined,
+    UndoOutlined,
+} from '@ant-design/icons-vue';
+import { SelectFile } from '../../../wailsjs/go/main/App';
 import { useWorkspaceState } from '../../store/workspace';
+import { indexOfId, type RailRow } from './model';
+import { runOps } from './devops';
+import ThumbRail from './ThumbRail.vue';
 
 export default defineComponent({
     components: {
+        CopyOutlined,
+        DeleteOutlined,
+        FileOutlined,
         FolderOpenOutlined,
+        RedoOutlined,
+        RotateLeftOutlined,
+        RotateRightOutlined,
+        UndoOutlined,
+        ThumbRail,
     },
     setup() {
         const store = useWorkspaceState();
         const origin = window.location.origin;
-        const protocol = window.location.protocol;
+        const autoLog = ref('');
 
-        // Wails 生产环境用的是 wails:// 自定义协议。相对路径在标准协议下没问题，
-        // 但自定义协议下解析结果可能不同，所以准备两种形式并在失败时自动切换。
+        // Wails 生产环境是 http://wails.localhost，相对路径可直接用；
+        // 这里仍保留 origin 形式的降级，作为其它平台/协议的保险。
         const urlMode = ref<'relative' | 'origin'>('relative');
         const imgFailed = ref(false);
 
@@ -73,13 +168,85 @@ export default defineComponent({
             }
             return u;
         };
-
         const onImgError = () => {
             if (urlMode.value === 'relative' && origin && origin !== 'null') {
                 urlMode.value = 'origin';
             } else {
                 imgFailed.value = true;
             }
+        };
+
+        // --- 缩略图轨道的数据 ---------------------------------------------
+
+        const rows = computed<RailRow[]>(() =>
+            store.seq.map((item, i) => {
+                const t = store.thumbOf(item);
+                return {
+                    id: item.id,
+                    kind: item.kind,
+                    label: i + 1,
+                    // 源页码：让用户知道这一页原本是文档的第几页（拖动后会不一致）
+                    srcLabel: item.kind === 'page' ? item.pageIndex + 1 : 0,
+                    rotation: item.kind === 'page' ? item.rotation : 0,
+                    url: t ? url(t.url) : '',
+                    w: t ? t.width : 150,
+                    h: t ? t.height : 212,
+                    paper: item.kind === 'blank' ? item.paper : undefined,
+                };
+            })
+        );
+
+        const currentPos = computed(() => {
+            const i = indexOfId(store.seq, store.current);
+            return i >= 0 ? `${i + 1}/${store.seq.length}` : "-";
+        });
+
+        const canEdit = computed(() => store.targetIds.length > 0);
+
+        // --- 画布内的预览自适应 -------------------------------------------
+
+        const canvasRef = ref<HTMLElement | null>(null);
+        const canvasW = ref(800);
+        const canvasH = ref(500);
+        let ro: ResizeObserver | null = null;
+
+        const view = computed(() => {
+            const item = store.currentItem;
+            if (!item) return null;
+            if (item.kind === 'blank') {
+                return { blank: true } as any;
+            }
+            const p = store.preview;
+            if (!p) return null;
+            const rot = item.rotation || 0;
+            const rot90 = rot === 90 || rot === 270;
+            // 旋转 90/270 后，显示尺寸要交换
+            const dispW = rot90 ? p.height : p.width;
+            const dispH = rot90 ? p.width : p.height;
+            const availW = Math.max(120, canvasW.value - 26);
+            const availH = Math.max(120, canvasH.value - 26);
+            const scale = Math.min(1, availW / dispW, availH / dispH);
+            return {
+                blank: false,
+                imgW: p.width,
+                imgH: p.height,
+                rot,
+                dispW,
+                dispH,
+                scale,
+                fitW: Math.round(dispW * scale),
+                fitH: Math.round(dispH * scale),
+            };
+        });
+
+        // --- 交互 ---------------------------------------------------------
+
+        const onSelect = (id: string, mode: string) => {
+            store.select(id, mode as any);
+        };
+
+        const onMove = (ids: string[], insertBefore: number) => {
+            store.doMove(ids, insertBefore);
         };
 
         const pickFile = async () => {
@@ -93,28 +260,93 @@ export default defineComponent({
                 imgFailed.value = false;
                 urlMode.value = 'relative';
                 await store.open(p);
-                if (store.error) {
-                    message.error(store.error);
-                }
+                if (store.error) message.error(store.error);
             } catch (e: any) {
                 message.error(String(e?.message ?? e));
             }
         };
 
+        const onKey = (e: KeyboardEvent) => {
+            if (!store.docId) return;
+            const ctrl = e.ctrlKey || e.metaKey;
+            if (ctrl && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                if (e.shiftKey) store.redo();
+                else store.undo();
+            } else if (ctrl && e.key.toLowerCase() === 'y') {
+                e.preventDefault();
+                store.redo();
+            } else if (ctrl && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                store.selectAll();
+            } else if (ctrl && e.key.toLowerCase() === 'd') {
+                e.preventDefault();
+                store.doDuplicate();
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                store.doDelete();
+            } else if (e.key === '[') {
+                e.preventDefault();
+                store.doRotate(-90);
+            } else if (e.key === ']') {
+                e.preventDefault();
+                store.doRotate(90);
+            }
+        };
+
         onMounted(async () => {
             store.loadCacheRoot();
-            // 测试钩子：设置了 PDFGURU_WS_AUTOOPEN 就自动打开，便于无人值守截图验证
+            window.addEventListener('keydown', onKey);
+            if (canvasRef.value && typeof ResizeObserver !== 'undefined') {
+                ro = new ResizeObserver(() => {
+                    const el = canvasRef.value;
+                    if (!el) return;
+                    canvasW.value = el.clientWidth;
+                    canvasH.value = el.clientHeight;
+                });
+                ro.observe(canvasRef.value);
+            }
+
+            // 无人值守验证钩子：自动打开文档并执行一段操作脚本
             try {
-                const auto = await WorkspaceAutoOpenPath();
+                const auto = await store.autoOpenPath();
                 if (auto) {
                     await store.open(auto);
+                    const script = await store.autoOps();
+                    if (script) {
+                        const log = runOps(store, script);
+                        autoLog.value = `· autoops=[${log.join(" ")}]`;
+                        // 脚本可能把当前页删掉了，把大图重新对齐一次
+                        if (store.current) await store.focusItem(store.current);
+                    }
                 }
             } catch (e) {
-                // 未设置该变量时忽略
+                // 未设置这些变量时忽略
             }
         });
 
-        return { store, pickFile, url, onImgError, urlMode, imgFailed, origin, protocol };
+        onUnmounted(() => {
+            window.removeEventListener('keydown', onKey);
+            if (ro) ro.disconnect();
+        });
+
+        return {
+            store,
+            rows,
+            url,
+            onImgError,
+            urlMode,
+            imgFailed,
+            origin,
+            currentPos,
+            canEdit,
+            view,
+            canvasRef,
+            onSelect,
+            onMove,
+            pickFile,
+            autoLog,
+        };
     },
 });
 </script>
@@ -130,17 +362,12 @@ export default defineComponent({
 .ws-toolbar {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
     padding: 6px 0 10px;
 }
 
-.ws-path {
+.ws-spacer {
     flex: 1;
-    color: #888;
-    font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .ws-meta {
@@ -161,65 +388,50 @@ export default defineComponent({
     overflow: hidden;
 }
 
-.ws-rail {
-    width: 190px;
-    flex: 0 0 190px;
-    overflow-y: auto;
-    background: #fafafa;
-    border-right: 1px solid #e8e8e8;
-    padding: 10px;
-}
-
-.ws-thumb {
-    position: relative;
-    margin-bottom: 10px;
-    padding: 4px;
-    border: 2px solid transparent;
-    border-radius: 4px;
-    background: #fff;
-    cursor: pointer;
-    text-align: center;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
-
-.ws-thumb img {
-    display: block;
-    margin: 0 auto;
-    max-width: 100%;
-    height: auto;
-}
-
-.ws-thumb-active {
-    border-color: #1677ff;
-}
-
-.ws-thumb-no {
-    position: absolute;
-    right: 6px;
-    bottom: 6px;
-    font-size: 11px;
-    color: #666;
-    background: rgba(255, 255, 255, 0.85);
-    border-radius: 3px;
-    padding: 0 4px;
-}
-
 .ws-canvas {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow: auto;
+    overflow: hidden;
     background: #f0f2f5;
     padding: 12px;
 }
 
-.ws-preview {
-    max-width: 100%;
-    max-height: 100%;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+/* 外层只负责占位（已缩放的尺寸），内层负责缩放，图片负责旋转 */
+.pv-fit {
+    position: relative;
+}
+
+.pv-box {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: top left;
+}
+
+.pv-box img {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: block;
     background: #fff;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}
+
+.ws-blank {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: #aaa;
+    font-size: 14px;
+}
+
+.ws-blank small {
+    font-size: 11px;
+    color: #bbb;
 }
 
 .ws-hint {

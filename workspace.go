@@ -230,3 +230,11 @@ func (a *App) WorkspaceCacheRoot() string {
 func (a *App) WorkspaceAutoOpenPath() string {
 	return strings.TrimSpace(os.Getenv("PDFGURU_WS_AUTOOPEN"))
 }
+
+// WorkspaceAutoOps 是配套的测试钩子：从 PDFGURU_WS_AUTOPS 读取一段操作脚本，
+// 交给前端执行（拖拽重排 / 删除 / 旋转 / 撤销…）。
+// 目的：这些交互没法用截图脚本手工触发，但把同样的 store 动作跑一遍之后，
+// 界面状态就能被截图核对了。语法见 frontend/src/components/Workspace/devops.ts。
+func (a *App) WorkspaceAutoOps() string {
+	return strings.TrimSpace(os.Getenv("PDFGURU_WS_AUTOPS"))
+}

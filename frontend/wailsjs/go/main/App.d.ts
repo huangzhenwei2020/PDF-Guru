@@ -134,6 +134,8 @@ export function WatermarkPDFByText(arg1:string,arg2:string,arg3:string,arg4:stri
 
 export function WorkspaceAutoOpenPath():Promise<string>;
 
+export function WorkspaceAutoOps():Promise<string>;
+
 export function WorkspaceCacheRoot():Promise<string>;
 
 export function WorkspaceOpen(arg1:string):Promise<main.WSDocInfo>;

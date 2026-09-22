@@ -266,6 +266,10 @@ export function WorkspaceAutoOpenPath() {
   return window['go']['main']['App']['WorkspaceAutoOpenPath']();
 }
 
+export function WorkspaceAutoOps() {
+  return window['go']['main']['App']['WorkspaceAutoOps']();
+}
+
 export function WorkspaceCacheRoot() {
   return window['go']['main']['App']['WorkspaceCacheRoot']();
 }

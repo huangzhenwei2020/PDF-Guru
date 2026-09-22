@@ -1,0 +1,226 @@
+/**
+ * 工作区的页面模型：纯函数，不依赖 Vue / DOM / 后端 / 文件系统。
+ *
+ * 这是整个 PPT 式编辑器的核心。用户的每一次拖拽、删除、旋转都只改这份内存里的
+ * 页面清单，不碰任何文件；只有"导出/保存"才会把清单落成真正的 PDF。
+ *
+ * 正因为如此，这里必须完全可测、可推理：所有函数都是 (seq, ...args) => newSeq，
+ * 不修改入参，不做 IO。撤销/重做也因此变得简单——存快照即可。
+ */
+
+export type Rotation = 0 | 90 | 180 | 270;
+
+/** 引用源文档中的某一页。 */
+export type PageItem = {
+    kind: "page";
+    id: string;
+    docId: string;
+    /** 源文档内的页序（0-based）。注意：与它在工作区里的位置无关。 */
+    pageIndex: number;
+    rotation: Rotation;
+};
+
+/** 插入的空白页。 */
+export type BlankItem = {
+    kind: "blank";
+    id: string;
+    paper: string;
+    orientation: "portrait" | "landscape";
+};
+
+export type WSItem = PageItem | BlankItem;
+
+/**
+ * 缩略图轨道里的一行 —— 由清单 + 缩略图拼出来的展示数据。
+ * 放在这里而不是 ThumbRail.vue 里，是因为 *.vue 的模块声明只有 default 导出，
+ * 从 SFC 里具名导出类型会导致类型检查失败。
+ */
+export type RailRow = {
+    id: string;
+    kind: "page" | "blank";
+    /** 在清单中的位置（1-based），也就是用户看到的页码 */
+    label: number;
+    /** 源文档页码（1-based）；空白页为 0 */
+    srcLabel: number;
+    rotation: number;
+    url: string;
+    /** 缩略图原始像素 */
+    w: number;
+    h: number;
+    paper?: string;
+};
+
+// ---------------------------------------------------------------------------
+// id 生成
+// ---------------------------------------------------------------------------
+
+let idSeq = 0;
+
+export function nextId(prefix = "i"): string {
+    idSeq += 1;
+    return `${prefix}${idSeq}`;
+}
+
+/** 仅测试用：重置计数器，让断言结果可预测。 */
+export function __resetIdSeq(): void {
+    idSeq = 0;
+}
+
+// ---------------------------------------------------------------------------
+// 构造
+// ---------------------------------------------------------------------------
+
+export function createPageItem(docId: string, pageIndex: number, rotation: Rotation = 0): PageItem {
+    return { kind: "page", id: nextId("p"), docId, pageIndex, rotation };
+}
+
+export function createBlankItem(paper = "A4", orientation: "portrait" | "landscape" = "portrait"): BlankItem {
+    return { kind: "blank", id: nextId("b"), paper, orientation };
+}
+
+/** 为整个源文档建立初始清单（1:1，顺序与源文档一致）。 */
+export function buildInitialSeq(docId: string, pageCount: number): PageItem[] {
+    const seq: PageItem[] = [];
+    for (let i = 0; i < pageCount; i++) {
+        seq.push(createPageItem(docId, i));
+    }
+    return seq;
+}
+
+/** 深拷贝一项并换上新 id（用于"复制页面"）。 */
+export function cloneItem(item: WSItem): WSItem {
+    if (item.kind === "page") {
+        return { ...item, id: nextId("p") };
+    }
+    return { ...item, id: nextId("b") };
+}
+
+// ---------------------------------------------------------------------------
+// 查询
+// ---------------------------------------------------------------------------
+
+export function indexOfId(seq: WSItem[], id: string): number {
+    for (let i = 0; i < seq.length; i++) {
+        if (seq[i].id === id) return i;
+    }
+    return -1;
+}
+
+export function allIds(seq: WSItem[]): string[] {
+    return seq.map((it) => it.id);
+}
+
+/**
+ * 计算 anchor..focus 之间（含两端）的所有 id。
+ * 用于 Shift 范围选择；anchor 或 focus 找不到时退化为只选 focus。
+ */
+export function rangeIds(seq: WSItem[], anchorId: string, focusId: string): string[] {
+    const a = indexOfId(seq, anchorId);
+    const b = indexOfId(seq, focusId);
+    if (b < 0) return [];
+    if (a < 0) return [focusId];
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    const out: string[] = [];
+    for (let i = lo; i <= hi; i++) out.push(seq[i].id);
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 结构性操作
+// ---------------------------------------------------------------------------
+
+/**
+ * 把选中的若干项移动到 insertBefore 处。
+ *
+ * insertBefore 用的是**原数组**坐标：表示"插到原先第 insertBefore 项之前"，
+ * 传 seq.length 表示插到末尾。之所以用原数组坐标而不是"移除后"的坐标，
+ * 是因为拖拽时 UI 只知道鼠标悬停在哪一项上，这样定义可以彻底避开差一错误。
+ */
+export function moveItems(seq: WSItem[], ids: string[], insertBefore: number): WSItem[] {
+    const idSet = new Set(ids);
+    const moving = seq.filter((it) => idSet.has(it.id));
+    if (moving.length === 0) return seq;
+
+    const rest = seq.filter((it) => !idSet.has(it.id));
+
+    // 原坐标 -> 移除后的插入位置：数一数 insertBefore 之前有多少项没被移走
+    let target = 0;
+    const limit = Math.min(insertBefore, seq.length);
+    for (let i = 0; i < limit; i++) {
+        if (!idSet.has(seq[i].id)) target++;
+    }
+
+    return [...rest.slice(0, target), ...moving, ...rest.slice(target)];
+}
+
+export function removeItems(seq: WSItem[], ids: string[]): WSItem[] {
+    const idSet = new Set(ids);
+    return seq.filter((it) => !idSet.has(it.id));
+}
+
+/** 复制选中项，副本紧跟在各自原件之后（与 PPT 的习惯一致）。 */
+export function duplicateItems(seq: WSItem[], ids: string[]): { seq: WSItem[]; newIds: string[] } {
+    const idSet = new Set(ids);
+    const out: WSItem[] = [];
+    const newIds: string[] = [];
+    for (const it of seq) {
+        out.push(it);
+        if (idSet.has(it.id)) {
+            const copy = cloneItem(it);
+            out.push(copy);
+            newIds.push(copy.id);
+        }
+    }
+    return { seq: out, newIds };
+}
+
+/** 在 insertBefore 处插入若干项（原数组坐标语义同 moveItems）。 */
+export function insertItems(seq: WSItem[], items: WSItem[], insertBefore: number): WSItem[] {
+    const at = Math.max(0, Math.min(insertBefore, seq.length));
+    return [...seq.slice(0, at), ...items, ...seq.slice(at)];
+}
+
+// ---------------------------------------------------------------------------
+// 旋转
+// ---------------------------------------------------------------------------
+
+function normalizeRotation(value: number): Rotation {
+    const v = ((value % 360) + 360) % 360;
+    if (v === 90 || v === 180 || v === 270) return v;
+    return 0;
+}
+
+/** 对选中页累加旋转。空白页没有内容，忽略。 */
+export function rotateItems(seq: WSItem[], ids: string[], delta: number): WSItem[] {
+    const idSet = new Set(ids);
+    return seq.map((it) => {
+        if (!idSet.has(it.id) || it.kind !== "page") return it;
+        return { ...it, rotation: normalizeRotation(it.rotation + delta) };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 比较（供撤销栈判断"这次操作到底改没改东西"）
+// ---------------------------------------------------------------------------
+
+/** 结构等价判断。任何字段变化都算变化，包括旋转角。 */
+export function sameSeq(a: WSItem[], b: WSItem[]): boolean {
+    if (a === b) return true;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        const x = a[i];
+        const y = b[i];
+        if (x.id !== y.id || x.kind !== y.kind) return false;
+        if (x.kind === "page" && y.kind === "page") {
+            if (x.docId !== y.docId || x.pageIndex !== y.pageIndex || x.rotation !== y.rotation) return false;
+        } else if (x.kind === "blank" && y.kind === "blank") {
+            if (x.paper !== y.paper || x.orientation !== y.orientation) return false;
+        }
+    }
+    return true;
+}
+
+/** 供撤销栈保存/恢复的纯数据快照。 */
+export function snapshot(seq: WSItem[]): WSItem[] {
+    return seq.map((it) => ({ ...it }));
+}
