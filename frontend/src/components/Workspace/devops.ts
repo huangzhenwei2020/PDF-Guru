@@ -21,7 +21,7 @@
  * 注意：每个操作都会改变清单，后续位置随之变化，脚本要按顺序推算。
  */
 
-import type { WSItem } from "./model";
+import { parseRange, type WSItem } from "./model";
 
 /** 把 "1,3-5" 这样的位置表达式翻译成当前清单里的 id。 */
 function positionsToIds(seq: WSItem[], spec: string): string[] {
@@ -46,7 +46,7 @@ function positionsToIds(seq: WSItem[], spec: string): string[] {
     return ids;
 }
 
-export function runOps(store: any, script: string): string[] {
+export async function runOps(store: any, script: string): Promise<string[]> {
     const log: string[] = [];
     const tokens = script
         .split(";")
@@ -67,6 +67,47 @@ export function runOps(store: any, script: string): string[] {
                 store.clearSelection();
                 log.push("none");
                 break;
+            case "invert":
+                store.invertSelection();
+                log.push("invert");
+                break;
+            case "keep":
+                store.keepOnlySelected();
+                log.push("keep");
+                break;
+            case "insblank": {
+                const n = parseInt(arg, 10) || 1;
+                store.insertBlank(n, "A4", "portrait");
+                log.push(`insblank:${n}`);
+                break;
+            }
+            // src2:<路径> —— 登记第二个文档并整体追加（验证跨文档合并）
+            case "src2": {
+                try {
+                    const docId = await store.registerSource(arg);
+                    store.appendSource(docId);
+                    log.push(`src2:${arg} -> ${docId}`);
+                } catch (e: any) {
+                    log.push(`src2 失败: ${e?.message ?? e}`);
+                }
+                break;
+            }
+            // inspdf:<路径>|<页码范围> —— 只插入另一个文档的指定页
+            case "inspdf": {
+                const bar = arg.indexOf("|");
+                const path = bar >= 0 ? arg.slice(0, bar) : arg;
+                const spec = bar >= 0 ? arg.slice(bar + 1) : "all";
+                try {
+                    const docId = await store.registerSource(path);
+                    const info = store.sources[docId];
+                    const idx = parseRange(spec, info.pageCount);
+                    store.insertPagesFrom(docId, idx);
+                    log.push(`inspdf:${spec} -> ${idx.length} 页`);
+                } catch (e: any) {
+                    log.push(`inspdf 失败: ${e?.message ?? e}`);
+                }
+                break;
+            }
             case "undo":
                 store.undo();
                 log.push("undo");

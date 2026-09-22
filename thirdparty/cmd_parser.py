@@ -388,5 +388,7 @@ def getParser():
     ws_render_parser.add_argument("--pages", type=str, default="all", help="页码范围, 如 1-20 或 all")
     ws_render_parser.add_argument("--width", type=int, default=160, help="缩略图宽度(px)")
     ws_render_parser.add_argument("-o", "--output", type=str, required=True, help="缩略图输出目录")
+    ws_render_parser.add_argument("--manifest", type=str, default=None,
+                                  help="清单输出路径。并发调用必须各自指定，否则会互相覆盖")
 
     return parser

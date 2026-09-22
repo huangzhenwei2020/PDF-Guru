@@ -42,6 +42,14 @@ export type RailRow = {
     label: number;
     /** 源文档页码（1-based）；空白页为 0 */
     srcLabel: number;
+    /**
+     * 来源标记。工作区可以合并多个文档，此时光看"源 p3"分不清是哪个文件的，
+     * 因此多来源时显示 S1/S2，并用颜色区分。只有一个来源时留空避免噪音。
+     */
+    srcTag: string;
+    srcColor: string;
+    /** 来源文件路径，用于悬停提示 */
+    srcPath: string;
     rotation: number;
     url: string;
     /** 缩略图原始像素 */
@@ -85,6 +93,68 @@ export function buildInitialSeq(docId: string, pageCount: number): PageItem[] {
         seq.push(createPageItem(docId, i));
     }
     return seq;
+}
+
+/** 为源文档中指定的若干页建立清单项（用于"插入另一个 PDF 的某几页"）。 */
+export function buildPageItems(docId: string, pageIndices: number[]): PageItem[] {
+    return pageIndices.map((i) => createPageItem(docId, i));
+}
+
+/** 只保留给定 id 的项（"仅保留选中页"）。 */
+export function keepItems(seq: WSItem[], ids: string[]): WSItem[] {
+    const idSet = new Set(ids);
+    return seq.filter((it) => idSet.has(it.id));
+}
+
+/**
+ * 解析页码范围，返回 0-based 下标（去重升序）。
+ * 支持 "all"、"1-3,5,8-N"，与后端 utils.parse_range 的常用子集保持一致；
+ * 格式错误时抛异常，由界面提示而不是静默插入错页。
+ */
+export function parseRange(spec: string, pageCount: number): number[] {
+    const s = (spec || "").trim();
+    if (s === "" || s.toLowerCase() === "all") {
+        return Array.from({ length: pageCount }, (_, i) => i);
+    }
+    const out = new Set<number>();
+    for (const raw of s.split(",")) {
+        const part = raw.trim();
+        if (!part) continue;
+        const m = /^(\d+|N)(?:-(\d+|N))?$/.exec(part);
+        if (!m) throw new Error(`页码范围格式错误：${part}`);
+        const toIdx = (t: string) => (t === "N" ? pageCount - 1 : parseInt(t, 10) - 1);
+        const a = toIdx(m[1]);
+        const b = m[2] !== undefined ? toIdx(m[2]) : a;
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        for (let i = lo; i <= hi; i++) {
+            if (i >= 0 && i < pageCount) out.add(i);
+        }
+    }
+    return Array.from(out).sort((x, y) => x - y);
+}
+
+/** 把 0-based 下标压成 "1-3,5,8-10" 形式的页码范围，用于只请求真正需要的缩略图。 */
+export function indicesToRangeSpec(indices: number[]): string {
+    const sorted = Array.from(new Set(indices)).sort((a, b) => a - b);
+    if (!sorted.length) return "";
+    const parts: string[] = [];
+    let start = sorted[0];
+    let prev = sorted[0];
+    const flush = () => {
+        parts.push(start === prev ? `${start + 1}` : `${start + 1}-${prev + 1}`);
+    };
+    for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i] === prev + 1) {
+            prev = sorted[i];
+            continue;
+        }
+        flush();
+        start = sorted[i];
+        prev = sorted[i];
+    }
+    flush();
+    return parts.join(",");
 }
 
 /** 深拷贝一项并换上新 id（用于"复制页面"）。 */

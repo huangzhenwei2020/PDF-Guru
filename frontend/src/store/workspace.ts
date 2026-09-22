@@ -3,14 +3,20 @@ import {
     WorkspaceOpen,
     WorkspaceThumbs,
     WorkspaceCacheRoot,
+    WorkspaceAddImageSource,
     WorkspaceAutoOpenPath,
     WorkspaceAutoOps,
 } from "../../wailsjs/go/main/App";
 import {
     allIds,
     buildInitialSeq,
+    buildPageItems,
+    createBlankItem,
     duplicateItems,
     indexOfId,
+    indicesToRangeSpec,
+    insertItems,
+    keepItems,
     moveItems,
     rangeIds,
     removeItems,
@@ -34,6 +40,14 @@ export type WSThumb = {
     height: number;
 };
 
+/** 工作区里的一个来源文档。清单里的每一项都指向某个来源的某一页。 */
+export type WSSource = {
+    docId: string;
+    path: string;
+    pageCount: number;
+    pages: WSPage[];
+};
+
 // 缩略图轨道用 150px，大图预览用 900px。
 // Go 侧的清单文件按宽度分开存放，因此两者可以各自渲染互不干扰。
 const THUMB_WIDTH = 150;
@@ -42,18 +56,35 @@ const PREVIEW_WIDTH = 900;
 /** 撤销栈上限。一份 1000 页清单的快照约 60KB，100 步也只有 6MB。 */
 const UNDO_LIMIT = 100;
 
+/** 多来源时用来区分不同文档的颜色 */
+const SRC_COLORS = ["#1677ff", "#52c41a", "#fa8c16", "#eb2f96", "#722ed1", "#13c2c2"];
+
+/**
+ * 正在渲染中的缩略图 / 预览。
+ *
+ * 必须做去重：同一页在同一时刻被请求两次时，后端会用同一个文件名写两次，
+ * 而 Windows 上 webview 正读着这个 png 会持有句柄，PyMuPDF 保存前删旧文件
+ * 就会失败（实测报 "cannot remove file ... Permission denied"）。
+ * 放在模块级而不是 state 里，是因为 Promise 不该进响应式状态。
+ */
+const inflightThumbs = new Set<string>();
+const inflightPreviews = new Map<string, Promise<WSThumb | null>>();
+
 export const WS_THUMB_WIDTH = THUMB_WIDTH;
 export const WS_PREVIEW_WIDTH = PREVIEW_WIDTH;
 
 export type SelectMode = "replace" | "toggle" | "range";
 
+/** 文件名（去掉目录），用于界面上的简短标题 */
+function baseName(p: string): string {
+    const parts = p.split(/[\\/]/);
+    return parts[parts.length - 1] || p;
+}
+
 export const useWorkspaceState = defineStore("WorkspaceState", {
     state: () => ({
-        docId: "",
-        path: "",
-        pageCount: 0,
-        /** 源文档结构，只读，用于显示尺寸/旋转等信息 */
-        pages: [] as WSPage[],
+        /** 所有来源文档，docId -> 来源。清单里的项通过 docId 指向这里 */
+        sources: {} as Record<string, WSSource>,
         /** 工作区页面清单 —— 整个编辑器的唯一真相 */
         seq: [] as WSItem[],
         /** 选中的项 id */
@@ -64,6 +95,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         current: "",
         /** 缩略图缓存，key = `${docId}:${pageIndex}` */
         thumbs: {} as Record<string, WSThumb>,
+        /** 已经请求过缩略图的 key，避免每次插入都重渲染整个来源 */
+        thumbAsked: {} as Record<string, true>,
+        /** 大图缓存，key 同 thumbs。聚焦同一页时不再重复渲染 */
+        previewCache: {} as Record<string, WSThumb>,
         preview: null as WSThumb | null,
         /** 撤销 / 重做栈，存的是清单快照 */
         past: [] as WSItem[][],
@@ -93,6 +128,47 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             const i = indexOfId(state.seq, state.current);
             return i >= 0 ? state.seq[i] : null;
         },
+        currentPos(state): number {
+            return indexOfId(state.seq, state.current);
+        },
+        /** 新内容插到哪里：最后一个选中项之后；没有选中就放到末尾。 */
+        insertAt(state): number {
+            const ids = state.selected.length ? state.selected : state.current ? [state.current] : [];
+            let last = -1;
+            for (const id of ids) {
+                const i = indexOfId(state.seq, id);
+                if (i > last) last = i;
+            }
+            return last >= 0 ? last + 1 : state.seq.length;
+        },
+        sourceList(state): WSSource[] {
+            return Object.values(state.sources);
+        },
+        /** 界面标题：用第一个来源的文件名 */
+        title(state): string {
+            const first = Object.values(state.sources)[0];
+            if (!first) return "";
+            const n = Object.keys(state.sources).length;
+            return n > 1 ? `${baseName(first.path)} 等 ${n} 个文档` : baseName(first.path);
+        },
+        /**
+         * 来源标记与配色。合并多个文档后，光看"源 p3"分不清是哪个文件的，
+         * 所以多来源时显示 S1/S2 并用颜色区分；只有一个来源时留空避免噪音。
+         * （Pinia 的 getter 可以返回函数，用起来和普通带参方法一样。）
+         */
+        sourceTag(state) {
+            return (docId: string): { tag: string; color: string; path: string } => {
+                const ids = Object.keys(state.sources);
+                const i = ids.indexOf(docId);
+                if (i < 0) return { tag: "", color: "#aaa", path: "" };
+                const multi = ids.length > 1;
+                return {
+                    tag: multi ? `S${i + 1}` : "",
+                    color: multi ? SRC_COLORS[i % SRC_COLORS.length] : "#aaa",
+                    path: state.sources[docId]?.path ?? "",
+                };
+            };
+        },
     },
 
     actions: {
@@ -106,17 +182,21 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             return this.thumbs[this.thumbKey(item.docId, item.pageIndex)] ?? null;
         },
 
+        pageInfoOf(item: WSItem): WSPage | null {
+            if (item.kind !== "page") return null;
+            return this.sources[item.docId]?.pages?.[item.pageIndex] ?? null;
+        },
+
         reset() {
             this.$patch({
-                docId: "",
-                path: "",
-                pageCount: 0,
-                pages: [],
+                sources: {},
                 seq: [],
                 selected: [],
                 anchor: "",
                 current: "",
                 thumbs: {},
+                thumbAsked: {},
+                previewCache: {},
                 preview: null,
                 past: [],
                 future: [],
@@ -134,26 +214,50 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             }
         },
 
+        /** 登记一个来源文档（不改变清单）。返回其 docId。 */
+        async registerSource(path: string): Promise<string> {
+            // 同一个文件只登记一次，避免重复渲染整份缩略图
+            const existing = Object.values(this.sources).find((s) => s.path === path);
+            if (existing) return existing.docId;
+
+            const info: any = await WorkspaceOpen(path);
+            const docId: string = info?.docId ?? "";
+            if (!docId) throw new Error("登记文档失败");
+            this.sources[docId] = {
+                docId,
+                path: info?.path ?? path,
+                pageCount: info?.pageCount ?? 0,
+                pages: info?.pages ?? [],
+            };
+            return docId;
+        },
+
+        /** 把图片合成 PDF 并登记为来源。返回其 docId。 */
+        async registerImageSource(images: string[]): Promise<string> {
+            const info: any = await WorkspaceAddImageSource(images);
+            const docId: string = info?.docId ?? "";
+            if (!docId) throw new Error("图片转换失败");
+            this.sources[docId] = {
+                docId,
+                path: info?.path ?? "",
+                pageCount: info?.pageCount ?? 0,
+                pages: info?.pages ?? [],
+            };
+            return docId;
+        },
+
+        /** 打开一个文档作为工作区的内容（会清空当前清单）。 */
         async open(path: string) {
             this.loading = true;
             this.error = "";
             try {
-                const info: any = await WorkspaceOpen(path);
-                const docId: string = info?.docId ?? "";
-                this.docId = docId;
-                this.path = info?.path ?? path;
-                this.pageCount = info?.pageCount ?? 0;
-                this.pages = info?.pages ?? [];
-
-                // 建立初始清单：顺序与源文档一致
-                this.seq = buildInitialSeq(docId, this.pageCount);
+                this.reset();
+                const docId = await this.registerSource(path);
+                const src = this.sources[docId];
+                this.seq = buildInitialSeq(docId, src.pageCount);
                 this.selected = [];
                 this.anchor = "";
                 this.current = this.seq.length ? this.seq[0].id : "";
-                this.past = [];
-                this.future = [];
-                this.preview = null;
-                this.thumbs = {};
 
                 await this.loadThumbs();
                 if (this.current) {
@@ -166,17 +270,43 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             }
         },
 
+        /**
+         * 只渲染清单里真正用到、且还没渲染过的缩略图。
+         * 这样"只插入 3 页"就不会白白渲染整个来源文档。
+         */
         async loadThumbs() {
-            if (!this.docId) return;
-            try {
-                const list: any = await WorkspaceThumbs(this.docId, "all", THUMB_WIDTH);
-                const map: Record<string, WSThumb> = {};
-                for (const t of list ?? []) {
-                    map[this.thumbKey(this.docId, t.pageIndex)] = t;
+            const need: Record<string, number[]> = {};
+            for (const it of this.seq) {
+                if (it.kind !== "page") continue;
+                const key = this.thumbKey(it.docId, it.pageIndex);
+                // 已渲染过、或正在渲染中的都跳过（后者是并发的来源）
+                if (this.thumbAsked[key] || inflightThumbs.has(key)) continue;
+                (need[it.docId] ||= []).push(it.pageIndex);
+            }
+
+            for (const docId of Object.keys(need)) {
+                const indices = need[docId].sort((a, b) => a - b);
+                const spec = indicesToRangeSpec(indices);
+                if (!spec) continue;
+                for (const i of indices) inflightThumbs.add(this.thumbKey(docId, i));
+                try {
+                    const list: any = await WorkspaceThumbs(docId, spec, THUMB_WIDTH);
+                    const got: Record<string, true> = {};
+                    for (const t of list ?? []) {
+                        const key = this.thumbKey(docId, t.pageIndex);
+                        this.thumbs[key] = t;
+                        got[key] = true;
+                    }
+                    // 只有真的拿到了才算已渲染，失败的下次还会重试
+                    for (const i of indices) {
+                        const key = this.thumbKey(docId, i);
+                        if (got[key]) this.thumbAsked[key] = true;
+                    }
+                } catch (e: any) {
+                    this.error = String(e?.message ?? e);
+                } finally {
+                    for (const i of indices) inflightThumbs.delete(this.thumbKey(docId, i));
                 }
-                this.thumbs = map;
-            } catch (e: any) {
-                this.error = String(e?.message ?? e);
             }
         },
 
@@ -194,14 +324,41 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 return;
             }
 
+            const key = this.thumbKey(item.docId, item.pageIndex);
+            const cached = this.previewCache[key];
+            if (cached) {
+                this.preview = cached;
+                this.previewLoading = false;
+                return;
+            }
+
             this.previewLoading = true;
             try {
-                const list: any = await WorkspaceThumbs(this.docId, String(item.pageIndex + 1), PREVIEW_WIDTH);
-                this.preview = list && list.length ? list[0] : null;
+                let task = inflightPreviews.get(key);
+                if (!task) {
+                    const docId = item.docId;
+                    const pageNo = item.pageIndex + 1;
+                    task = (async () => {
+                        const list: any = await WorkspaceThumbs(docId, String(pageNo), PREVIEW_WIDTH);
+                        return list && list.length ? (list[0] as WSThumb) : null;
+                    })();
+                    inflightPreviews.set(key, task);
+                    // 用完即清（两个分支都处理，避免产生未处理的 rejection）
+                    task.then(
+                        () => inflightPreviews.delete(key),
+                        () => inflightPreviews.delete(key)
+                    );
+                }
+                const got = await task;
+                if (got) {
+                    this.previewCache[key] = got;
+                    // 聚焦已经切走时不要用迟到的结果覆盖当前画面
+                    if (this.current === id) this.preview = got;
+                }
             } catch (e: any) {
                 this.error = String(e?.message ?? e);
             } finally {
-                this.previewLoading = false;
+                if (this.current === id) this.previewLoading = false;
             }
         },
 
@@ -286,6 +443,69 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.apply(rotateItems(this.seq, target, delta));
             // 旋转不改变顺序，但大图要跟着重画
             if (this.current) this.focusItem(this.current);
+        },
+
+        // --- 插入（Phase 3）-----------------------------------------------
+
+        /** 在当前位置插入若干项，并把它们设为新的选区。 */
+        insertSome(items: WSItem[], at?: number) {
+            if (!items.length) return;
+            const pos = at ?? this.insertAt;
+            const next = insertItems(this.seq, items, pos);
+            this.apply(
+                next,
+                items.map((it) => it.id)
+            );
+            this.loadThumbs();
+            if (items.length) this.focusItem(items[0].id);
+        },
+
+        /** 插入空白页。 */
+        insertBlank(count = 1, paper = "A4", orientation: "portrait" | "landscape" = "portrait") {
+            const n = Math.max(1, Math.min(200, Math.floor(count)));
+            const items: WSItem[] = [];
+            for (let i = 0; i < n; i++) items.push(createBlankItem(paper, orientation));
+            this.insertSome(items);
+        },
+
+        /** 插入某个来源文档的指定页（0-based 下标）。 */
+        insertPagesFrom(docId: string, pageIndices: number[]) {
+            if (!this.sources[docId]) return;
+            this.insertSome(buildPageItems(docId, pageIndices));
+        },
+
+        /** 把某个来源文档整体追加到清单末尾。 */
+        appendSource(docId: string) {
+            const src = this.sources[docId];
+            if (!src) return;
+            const indices = Array.from({ length: src.pageCount }, (_, i) => i);
+            const items = buildPageItems(docId, indices);
+            const next = insertItems(this.seq, items, this.seq.length);
+            this.apply(
+                next,
+                items.map((it) => it.id)
+            );
+            this.loadThumbs();
+            if (items.length) this.focusItem(items[0].id);
+        },
+
+        /** 仅保留选中页（导出单个文档前的常用整理动作）。 */
+        keepOnlySelected() {
+            const target = this.targetIds;
+            if (!target.length || target.length === this.seq.length) return;
+            this.apply(keepItems(this.seq, target), target);
+        },
+
+        /** 反选：选中当前未选中的项。 */
+        invertSelection() {
+            const set = new Set(this.selected);
+            this.selected = allIds(this.seq).filter((id) => !set.has(id));
+            this.anchor = this.selected[0] ?? "";
+        },
+
+        /** 删除没有内容可言的项之外的空来源（目前仅用于诊断显示）。 */
+        sourcePageCount(docId: string): number {
+            return this.sources[docId]?.pageCount ?? 0;
         },
 
         undo() {

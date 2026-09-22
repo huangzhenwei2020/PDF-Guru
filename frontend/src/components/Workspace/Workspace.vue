@@ -9,6 +9,27 @@
                 打开 PDF
             </a-button>
 
+            <a-dropdown :trigger="['click']">
+                <a-button :disabled="!store.seq.length">
+                    <template #icon>
+                        <plus-outlined />
+                    </template>
+                    插入
+                    <down-outlined />
+                </a-button>
+                <template #overlay>
+                    <a-menu @click="onInsertMenu">
+                        <a-menu-item key="blank">插入空白页…</a-menu-item>
+                        <a-menu-item key="pdf">从 PDF 插入页面…</a-menu-item>
+                        <a-menu-item key="append">追加整个 PDF…</a-menu-item>
+                        <a-menu-item key="images">插入图片…</a-menu-item>
+                        <a-menu-divider />
+                        <a-menu-item key="keep">仅保留选中页</a-menu-item>
+                        <a-menu-item key="invert">反选</a-menu-item>
+                    </a-menu>
+                </template>
+            </a-dropdown>
+
             <a-divider type="vertical" />
 
             <a-tooltip title="撤销 (Ctrl+Z)">
@@ -65,9 +86,10 @@
             <span class="ws-spacer"></span>
             <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
             <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
-            <span class="ws-meta" v-if="store.pageCount">
+            <span class="ws-meta" v-if="store.seq.length">
                 {{ store.seq.length }} 页
                 <template v-if="store.selected.length"> · 已选 {{ store.selected.length }}</template>
+                <template v-if="store.sourceList.length > 1"> · {{ store.sourceList.length }} 个来源</template>
             </span>
         </div>
 
@@ -86,7 +108,7 @@
                 <div v-else-if="view && view.blank" class="ws-blank">
                     <file-outlined />
                     <div>空白页</div>
-                    <small>导出时按所选纸张插入</small>
+                    <small>{{ blankLabel }}</small>
                 </div>
 
                 <!-- 页面预览：旋转与缩放分层处理，每层只做一件事，
@@ -113,10 +135,48 @@
 
         <!-- 诊断条：供图是本方案的地基，把关键状态摊在界面上，出问题截图即可定位 -->
         <div class="ws-diag">
-            docId={{ store.docId || "-" }} · origin={{ origin }} · urlMode={{ urlMode }} ·
-            清单={{ store.seq.length }} · 已选={{ store.selected.length }} · 撤销栈={{ store.past.length }} ·
-            重做栈={{ store.future.length }} · 当前={{ currentPos }} {{ autoLog }}
+            来源={{ store.sourceList.length }} · 清单={{ store.seq.length }} · 已选={{ store.selected.length }} ·
+            撤销栈={{ store.past.length }} · 重做栈={{ store.future.length }} ·
+            当前={{ store.currentPos + 1 }}/{{ store.seq.length }} · 预览 p{{ previewPage }} · urlMode={{ urlMode }}
+            {{ autoLog }}
         </div>
+
+        <!-- 插入空白页 -->
+        <a-modal v-model:visible="blankVisible" title="插入空白页" ok-text="插入" cancel-text="取消"
+            @ok="doInsertBlank">
+            <a-form layout="vertical">
+                <a-form-item label="纸张">
+                    <a-select v-model:value="blankPaper" style="width: 140px"
+                        :options="[{ value: 'A4' }, { value: 'A3' }, { value: 'A5' }, { value: 'Letter' }]" />
+                </a-form-item>
+                <a-form-item label="方向">
+                    <a-radio-group v-model:value="blankOrientation">
+                        <a-radio-button value="portrait">纵向</a-radio-button>
+                        <a-radio-button value="landscape">横向</a-radio-button>
+                    </a-radio-group>
+                </a-form-item>
+                <a-form-item label="数量">
+                    <a-input-number v-model:value="blankCount" :min="1" :max="200" />
+                </a-form-item>
+            </a-form>
+            <div class="ws-note">将插入到第 {{ store.insertAt + 1 }} 位（当前选区之后）</div>
+        </a-modal>
+
+        <!-- 从 PDF 插入指定页 -->
+        <a-modal v-model:visible="insVisible" title="从 PDF 插入页面" ok-text="插入" cancel-text="取消"
+            @ok="doInsertFromPdf">
+            <div class="ws-note ws-ellipsis">{{ insPath }}</div>
+            <div class="ws-note">该文档共 {{ insPageCount }} 页</div>
+            <a-form layout="vertical" style="margin-top: 10px;">
+                <a-form-item label="页码范围">
+                    <a-input v-model:value="insRange" placeholder="all，或 1-3,5,8-N" />
+                </a-form-item>
+            </a-form>
+            <div class="ws-note">
+                将插入 {{ insCount === null ? "?" : insCount }} 页到第 {{ store.insertAt + 1 }} 位
+                <span v-if="insError" class="ws-err"> · {{ insError }}</span>
+            </div>
+        </a-modal>
     </div>
 </template>
 
@@ -126,16 +186,18 @@ import { message } from 'ant-design-vue';
 import {
     CopyOutlined,
     DeleteOutlined,
+    DownOutlined,
     FileOutlined,
     FolderOpenOutlined,
+    PlusOutlined,
     RedoOutlined,
     RotateLeftOutlined,
     RotateRightOutlined,
     UndoOutlined,
 } from '@ant-design/icons-vue';
-import { SelectFile } from '../../../wailsjs/go/main/App';
+import { SelectFile, SelectMultipleFiles } from '../../../wailsjs/go/main/App';
 import { useWorkspaceState } from '../../store/workspace';
-import { indexOfId, type RailRow } from './model';
+import { indexOfId, parseRange, type RailRow } from './model';
 import { runOps } from './devops';
 import ThumbRail from './ThumbRail.vue';
 
@@ -143,8 +205,10 @@ export default defineComponent({
     components: {
         CopyOutlined,
         DeleteOutlined,
+        DownOutlined,
         FileOutlined,
         FolderOpenOutlined,
+        PlusOutlined,
         RedoOutlined,
         RotateLeftOutlined,
         RotateRightOutlined,
@@ -181,12 +245,16 @@ export default defineComponent({
         const rows = computed<RailRow[]>(() =>
             store.seq.map((item, i) => {
                 const t = store.thumbOf(item);
+                const tag = store.sourceTag(item.kind === 'page' ? item.docId : '');
                 return {
                     id: item.id,
                     kind: item.kind,
                     label: i + 1,
                     // 源页码：让用户知道这一页原本是文档的第几页（拖动后会不一致）
                     srcLabel: item.kind === 'page' ? item.pageIndex + 1 : 0,
+                    srcTag: tag.tag,
+                    srcColor: tag.color,
+                    srcPath: tag.path,
                     rotation: item.kind === 'page' ? item.rotation : 0,
                     url: t ? url(t.url) : '',
                     w: t ? t.width : 150,
@@ -196,12 +264,23 @@ export default defineComponent({
             })
         );
 
-        const currentPos = computed(() => {
-            const i = indexOfId(store.seq, store.current);
-            return i >= 0 ? `${i + 1}/${store.seq.length}` : "-";
+        const canEdit = computed(() => store.targetIds.length > 0);
+
+        /** 诊断用：当前显示的大图实际是哪一页，与期望不一致时直接标出来 */
+        const previewPage = computed(() => {
+            const p = store.preview;
+            if (!p) return '-';
+            const it = store.currentItem;
+            const want = it && it.kind === 'page' ? it.pageIndex + 1 : null;
+            const got = p.pageIndex + 1;
+            return want === null || want === got ? String(got) : `${got}(期望${want})`;
         });
 
-        const canEdit = computed(() => store.targetIds.length > 0);
+        const blankLabel = computed(() => {
+            const it = store.currentItem;
+            if (!it || it.kind !== 'blank') return '导出时按所选纸张插入';
+            return `${it.paper} · ${it.orientation === 'landscape' ? '横向' : '纵向'}`;
+        });
 
         // --- 画布内的预览自适应 -------------------------------------------
 
@@ -239,7 +318,111 @@ export default defineComponent({
             };
         });
 
-        // --- 交互 ---------------------------------------------------------
+        // --- 插入 ---------------------------------------------------------
+
+        const blankVisible = ref(false);
+        const blankPaper = ref('A4');
+        const blankOrientation = ref<'portrait' | 'landscape'>('portrait');
+        const blankCount = ref(1);
+
+        const insVisible = ref(false);
+        const insDocId = ref('');
+        const insPath = ref('');
+        const insRange = ref('all');
+
+        const insPageCount = computed(() => store.sources[insDocId.value]?.pageCount ?? 0);
+
+        const insCount = computed<number | null>(() => {
+            try {
+                return parseRange(insRange.value, insPageCount.value).length;
+            } catch (e) {
+                return null;
+            }
+        });
+        const insError = computed(() => {
+            try {
+                parseRange(insRange.value, insPageCount.value);
+                return '';
+            } catch (e: any) {
+                return String(e?.message ?? e);
+            }
+        });
+
+        const fail = (e: any) => message.error(String(e?.message ?? e));
+
+        const doInsertBlank = () => {
+            store.insertBlank(blankCount.value, blankPaper.value, blankOrientation.value);
+            blankVisible.value = false;
+        };
+
+        const doInsertFromPdf = () => {
+            try {
+                const idx = parseRange(insRange.value, insPageCount.value);
+                if (!idx.length) {
+                    message.warning('页码范围没有选中任何页');
+                    return;
+                }
+                store.insertPagesFrom(insDocId.value, idx);
+                insVisible.value = false;
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
+        const onInsertMenu = async ({ key }: { key: string }) => {
+            if (key === 'blank') {
+                blankVisible.value = true;
+                return;
+            }
+            if (key === 'keep') {
+                store.keepOnlySelected();
+                return;
+            }
+            if (key === 'invert') {
+                store.invertSelection();
+                return;
+            }
+            if (key === 'pdf') {
+                try {
+                    const p: string = await SelectFile();
+                    if (!p) return;
+                    const docId = await store.registerSource(p);
+                    insDocId.value = docId;
+                    insPath.value = p;
+                    insRange.value = 'all';
+                    insVisible.value = true;
+                } catch (e: any) {
+                    fail(e);
+                }
+                return;
+            }
+            if (key === 'append') {
+                try {
+                    const p: string = await SelectFile();
+                    if (!p) return;
+                    const docId = await store.registerSource(p);
+                    store.appendSource(docId);
+                    await store.loadThumbs();
+                } catch (e: any) {
+                    fail(e);
+                }
+                return;
+            }
+            if (key === 'images') {
+                try {
+                    const ps: string[] = await SelectMultipleFiles();
+                    if (!ps || !ps.length) return;
+                    const docId = await store.registerImageSource(ps);
+                    store.appendSource(docId);
+                    await store.loadThumbs();
+                } catch (e: any) {
+                    fail(e);
+                }
+                return;
+            }
+        };
+
+        // --- 其它交互 -----------------------------------------------------
 
         const onSelect = (id: string, mode: string) => {
             store.select(id, mode as any);
@@ -262,12 +445,12 @@ export default defineComponent({
                 await store.open(p);
                 if (store.error) message.error(store.error);
             } catch (e: any) {
-                message.error(String(e?.message ?? e));
+                fail(e);
             }
         };
 
         const onKey = (e: KeyboardEvent) => {
-            if (!store.docId) return;
+            if (!store.seq.length) return;
             const ctrl = e.ctrlKey || e.metaKey;
             if (ctrl && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
@@ -314,8 +497,8 @@ export default defineComponent({
                     await store.open(auto);
                     const script = await store.autoOps();
                     if (script) {
-                        const log = runOps(store, script);
-                        autoLog.value = `· autoops=[${log.join(" ")}]`;
+                        const log = await runOps(store, script);
+                        autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
                         if (store.current) await store.focusItem(store.current);
                     }
@@ -338,14 +521,29 @@ export default defineComponent({
             urlMode,
             imgFailed,
             origin,
-            currentPos,
             canEdit,
+            blankLabel,
+            previewPage,
             view,
             canvasRef,
             onSelect,
             onMove,
             pickFile,
+            onInsertMenu,
             autoLog,
+            // 插入相关
+            blankVisible,
+            blankPaper,
+            blankOrientation,
+            blankCount,
+            doInsertBlank,
+            insVisible,
+            insPath,
+            insRange,
+            insPageCount,
+            insCount,
+            insError,
+            doInsertFromPdf,
         };
     },
 });
@@ -440,6 +638,22 @@ export default defineComponent({
     text-align: center;
     padding: 20px 8px;
     line-height: 1.8;
+}
+
+.ws-note {
+    color: #999;
+    font-size: 12px;
+    line-height: 1.9;
+}
+
+.ws-ellipsis {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ws-err {
+    color: #cf1322;
 }
 
 .ws-diag {

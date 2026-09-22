@@ -15,6 +15,7 @@
    清单文件则把实际像素尺寸告诉前端，避免图片加载时才撑开布局造成抖动。
 """
 
+import os
 import traceback
 from pathlib import Path
 
@@ -52,8 +53,13 @@ def workspace_info(doc_path: str, output_path: str):
         utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
 
 
-def workspace_render(doc_path: str, pages: str, width: int, output_dir: str):
-    """把指定页渲染成 PNG 缩略图，并在 output_dir 写下清单。"""
+def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, manifest_path: str = None):
+    """把指定页渲染成 PNG 缩略图，并写出清单。
+
+    manifest_path 由调用方指定时写到那里。**每个请求必须用独立清单**：
+    如果并发请求共用一个清单文件，后写的会覆盖先写的，调用方就会读到别的请求
+    的页码与文件名，表现为"请求第 2 页却显示第 3 页"（实测踩到过）。
+    """
     try:
         doc: fitz.Document = fitz.open(doc_path)
         out = Path(output_dir)
@@ -67,18 +73,47 @@ def workspace_render(doc_path: str, pages: str, width: int, output_dir: str):
             if page.rect.width <= 0:
                 continue
             zoom = float(width) / page.rect.width
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-            name = f"p{i+1}@w{width}.png"
-            pix.save(str(out / name))
+            stem = f"p{i+1}@w{width}"
+            name = f"{stem}.png"
+            target = out / name
+            pw = max(1, int(page.rect.width * zoom + 0.5))
+            ph = max(1, int(page.rect.height * zoom + 0.5))
+
+            # 已经渲染过就直接复用。两个原因：
+            #   1. 同一页同一宽度内容恒定，重渲染纯属浪费；
+            #   2. 关键 —— Windows 上 webview 正读取该 png 时会持有文件句柄，
+            #      PyMuPDF 的 save() 会先删除旧文件，于是报 "Permission denied"。
+            #      实测并发聚焦同一页时必然踩到，这里从根上避免覆盖。
+            if not target.exists():
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+                # 先写进程唯一的临时文件再原子改名：既不会留下半张图，
+                # 也让并发的两次渲染各写各的，不会互相踩。
+                # 注意临时名必须以 .png 结尾 —— PyMuPDF 是按扩展名推断图片格式的。
+                tmp = out / f"{stem}.{os.getpid()}.part.png"
+                pix.save(str(tmp))
+                pw, ph = pix.width, pix.height
+                pix = None
+                try:
+                    os.replace(str(tmp), str(target))
+                except OSError:
+                    # 目标是在这一步之前刚被别的进程写好的，沿用即可
+                    if not target.exists():
+                        raise
+                    try:
+                        os.remove(str(tmp))
+                    except OSError:
+                        pass
+
             manifest.append({
                 "index": i,
                 "file": name,
-                "width": pix.width,
-                "height": pix.height,
+                "width": pw,
+                "height": ph,
             })
-            pix = None
 
-        utils.dump_json(str(out / MANIFEST_TEMPLATE.format(width=width)), {"width": width, "pages": manifest})
+        mpath = Path(manifest_path) if manifest_path else (out / MANIFEST_TEMPLATE.format(width=width))
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        utils.dump_json(str(mpath), {"width": width, "pages": manifest})
         doc.close()
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
     except:

@@ -13,7 +13,9 @@
                 <div v-else class="blankface">{{ row.paper || "空白页" }}</div>
             </div>
             <span class="no">{{ row.label }}</span>
-            <span v-if="row.srcLabel" class="src">源 p{{ row.srcLabel }}</span>
+            <span v-if="row.srcLabel" class="src" :style="{ color: row.srcColor }" :title="row.srcPath">
+                <template v-if="row.srcTag">{{ row.srcTag }}·</template>p{{ row.srcLabel }}
+            </span>
             <span v-if="row.rotation" class="rot">{{ row.rotation }}°</span>
         </div>
         <div v-if="!rows.length" class="hint">打开一个 PDF 后，这里会列出每一页</div>
@@ -328,7 +330,7 @@ export default defineComponent({
     left: 6px;
     bottom: 4px;
     font-size: 10px;
-    color: #aaa;
+    font-weight: 600;
     background: rgba(255, 255, 255, 0.9);
     border-radius: 3px;
     padding: 0 3px;

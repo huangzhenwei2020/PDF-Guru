@@ -96,8 +96,9 @@ type WSThumb struct {
 	Height    int    `json:"height"`
 }
 
-// WorkspaceOpen 登记一个文档并读取其结构。
-func (a *App) WorkspaceOpen(path string) (WSDocInfo, error) {
+// registerDoc 登记一个 PDF 并读取其结构。WorkspaceOpen 与 WorkspaceAddImageSource
+// 都走这里，保证两条来源拿到完全一样的元数据。
+func (a *App) registerDoc(path string) (WSDocInfo, error) {
 	var info WSDocInfo
 	wsInit()
 
@@ -142,8 +143,49 @@ func (a *App) WorkspaceOpen(path string) (WSDocInfo, error) {
 	wsDocs[docID] = info
 	wsMu.Unlock()
 
-	logger.Printf("工作区打开文档: docID=%s pages=%d path=%s\n", docID, info.PageCount, path)
+	logger.Printf("工作区登记文档: docID=%s pages=%d path=%s\n", docID, info.PageCount, path)
 	return info, nil
+}
+
+// WorkspaceOpen 登记一个文档并读取其结构。
+// 工作区可以同时持有多个来源文档（插入别的 PDF、追加、图片转 PDF），
+// 因此这个接口同时也是"添加来源"。
+func (a *App) WorkspaceOpen(path string) (WSDocInfo, error) {
+	return a.registerDoc(path)
+}
+
+// WorkspaceAddImageSource 把若干图片合成一个 PDF 并登记为来源，供"插入图片"使用。
+// 复用已有的 convert 命令（png -> pdf，合并），因此不需要新增 Python 命令。
+func (a *App) WorkspaceAddImageSource(images []string) (WSDocInfo, error) {
+	var info WSDocInfo
+	wsInit()
+
+	if len(images) == 0 {
+		return info, errors.New("没有选择图片")
+	}
+	for _, p := range images {
+		if err := a.CheckFileExists(p); err != nil {
+			return info, errors.Wrap(err, p)
+		}
+	}
+
+	wsMu.Lock()
+	wsSeq++
+	seq := wsSeq
+	wsMu.Unlock()
+
+	srcDir := filepath.Join(wsCacheRoot, "src")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		return info, errors.Wrap(err, "创建来源目录失败")
+	}
+	outPDF := filepath.Join(srcDir, fmt.Sprintf("images-%d.pdf", seq))
+
+	// name_digit 让 img2 排在 img10 前面，比纯字典序符合直觉
+	if err := a.PDFConversion(images, outPDF, 0, true, "name_digit", "asc", "png", "pdf", "", "", ""); err != nil {
+		return info, errors.Wrap(err, "图片转 PDF 失败")
+	}
+
+	return a.registerDoc(outPDF)
 }
 
 // WorkspaceThumbs 渲染指定页范围的缩略图，返回可直接用于 <img> 的 URL 列表。
@@ -173,14 +215,21 @@ func (a *App) WorkspaceThumbs(docID string, pages string, width int) ([]WSThumb,
 		return nil, errors.Wrap(err, "创建缩略图目录失败")
 	}
 
-	args := []string{"ws-render", "--pages", pages, "--width", fmt.Sprintf("%d", width), "--output", dir, info.Path}
+	// 每个请求用一份独立清单。若并发请求共用一个清单文件，后写的会覆盖先写的，
+	// 调用方就会读到别的请求的页码与文件名——实测表现为"请求第 2 页却显示第 3 页"。
+	wsMu.Lock()
+	wsSeq++
+	reqID := wsSeq
+	wsMu.Unlock()
+	manifestPath := filepath.Join(dir, fmt.Sprintf("_manifest_w%d_r%d.json", width, reqID))
+
+	args := []string{"ws-render", "--pages", pages, "--width", fmt.Sprintf("%d", width),
+		"--output", dir, "--manifest", manifestPath, info.Path}
 	if err := a.cmdRunner(args, "pdf"); err != nil {
 		return nil, err
 	}
 
 	// 清单里带着实际像素尺寸，前端可据此预留位置，避免图片加载时布局抖动。
-	// 清单按宽度分文件，因此缩略图轨道与大图预览可以各自渲染互不干扰。
-	manifestPath := filepath.Join(dir, fmt.Sprintf("_manifest_w%d.json", width))
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "读取缩略图清单失败")

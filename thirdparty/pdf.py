@@ -191,7 +191,7 @@ def main():
     elif args.which == "ws_info":
         workspace_info(doc_path=args.input_path, output_path=args.output)
     elif args.which == "ws_render":
-        workspace_render(doc_path=args.input_path, pages=args.pages, width=args.width, output_dir=args.output)
+        workspace_render(doc_path=args.input_path, pages=args.pages, width=args.width, output_dir=args.output, manifest_path=args.manifest)
 
 if __name__ == "__main__":
     main()
