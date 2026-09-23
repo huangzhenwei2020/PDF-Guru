@@ -574,6 +574,11 @@ export default defineComponent({
                     rotation: item.kind === 'page' ? item.rotation : 0,
                     url: t ? url(t.url) : '',
                     loaded: !!t,
+                    ops: {
+                        crop: !!(item.kind === 'page' && item.ops?.crop),
+                        masks: item.kind === 'page' ? (item.ops?.masks?.length ?? 0) : 0,
+                        noAnnots: !!(item.kind === 'page' && item.ops?.removeAnnots),
+                    },
                     w: t ? t.width : (ph as any).w,
                     h: t ? t.height : (ph as any).h,
                     paper: item.kind === 'blank' ? item.paper : undefined,
@@ -690,6 +695,8 @@ export default defineComponent({
             ['Ctrl + D', '复制所选页面'],
             ['Delete', '删除所选页面'],
             ['[ / ]', '逆时针 / 顺时针旋转 90°'],
+            ['方向键 / PageUp / PageDown', '上一页 / 下一页'],
+            ['Home / End', '第一页 / 最后一页'],
             ['Ctrl + Z / Ctrl + Shift + Z', '撤销 / 重做'],
             ['Ctrl + S', '保存（覆盖主来源文件，先自动备份 .bak）'],
             ['Ctrl + Shift + S', '导出为新的 PDF'],
@@ -1161,6 +1168,16 @@ export default defineComponent({
             }
         };
 
+        const gotoIndex = (i: number) => {
+            if (i < 0 || i >= store.seq.length) return;
+            store.select(store.seq[i].id, 'replace');
+        };
+
+        const gotoRelative = (delta: number) => {
+            const cur = store.currentPos;
+            gotoIndex(cur < 0 ? 0 : cur + delta);
+        };
+
         const onKey = (e: KeyboardEvent) => {
             if (!store.seq.length) return;
             const ctrl = e.ctrlKey || e.metaKey;
@@ -1168,6 +1185,28 @@ export default defineComponent({
                 e.preventDefault();
                 if (e.shiftKey) openExport();
                 else doSave();
+                return;
+            }
+            // 翻页：方向键 / PageUp / PageDown / Home / End
+            // 任何文档阅读器都有，缺了会很别扭
+            if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') {
+                e.preventDefault();
+                gotoRelative(1);
+                return;
+            }
+            if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                e.preventDefault();
+                gotoRelative(-1);
+                return;
+            }
+            if (e.key === 'Home') {
+                e.preventDefault();
+                gotoIndex(0);
+                return;
+            }
+            if (e.key === 'End') {
+                e.preventDefault();
+                gotoIndex(store.seq.length - 1);
                 return;
             }
             if (ctrl && e.key.toLowerCase() === 'z') {

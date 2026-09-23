@@ -1,7 +1,7 @@
 <template>
     <div ref="railEl" class="rail" :class="{ dragging }" @scroll="onScroll"
         :style="{ width: railWidth + 'px', flexBasis: railWidth + 'px' }">
-        <div v-for="(row, i) in rows" :key="row.id" class="row" :data-index="i" :class="{
+        <div v-for="(row, i) in rows" :key="row.id" class="row" :data-index="i" :data-id="row.id" :class="{
             sel: selectedSet.has(row.id),
             cur: row.id === current,
             moved: dragging && dragSet.has(row.id),
@@ -21,6 +21,12 @@
                 <template v-if="row.srcTag">{{ row.srcTag }}·</template>p{{ row.srcLabel }}
             </span>
             <span v-if="row.rotation" class="rot">{{ row.rotation }}°</span>
+            <!-- 编辑标记：一眼看出哪些页被改动过，否则要逐页点开才知道 -->
+            <span v-if="row.ops.crop || row.ops.masks || row.ops.noAnnots" class="edits" :title="opsTitle(row)">
+                <i v-if="row.ops.crop" class="dot dot-crop"></i>
+                <i v-if="row.ops.masks" class="dot dot-mask"></i>
+                <i v-if="row.ops.noAnnots" class="dot dot-annots"></i>
+            </span>
         </div>
         <div v-if="!rows.length" class="hint">打开一个 PDF 后，这里会列出每一页</div>
 
@@ -296,6 +302,15 @@ export default defineComponent({
 
         const isRot90 = (r: number) => r === 90 || r === 270;
 
+        /** 编辑标记的悬停说明 */
+        const opsTitle = (row: RailRow) => {
+            const parts: string[] = [];
+            if (row.ops.crop) parts.push('已裁剪');
+            if (row.ops.masks) parts.push(`遮盖 ${row.ops.masks} 处`);
+            if (row.ops.noAnnots) parts.push('导出时删除批注');
+            return parts.join(' · ');
+        };
+
         // 轨道宽度跟着缩略图尺寸走：写死宽度会让"大图"被裁掉右边。
         // 34 = 轨道内边距 20 + 行内边距 8 + 行边框 4 + 留一点给滚动条
         const railWidth = computed(() => props.width + 34);
@@ -314,6 +329,17 @@ export default defineComponent({
             transform: `translate(-50%, -50%) rotate(${row.rotation}deg)`,
         });
 
+        // 当前页变化时把它滚进视野。键盘翻页时尤其需要，
+        // 否则翻到第 80 页而轨道还停在原处，看不出自己到了哪。
+        watch(
+            () => props.current,
+            async (id) => {
+                await nextTick();
+                const el = railEl.value?.querySelector(`.row[data-id="${id}"]`) as HTMLElement | null;
+                el?.scrollIntoView({ block: 'nearest' });
+            }
+        );
+
         return {
             railEl,
             railWidth,
@@ -329,6 +355,7 @@ export default defineComponent({
             onClick,
             onContextMenu,
             onScroll,
+            opsTitle,
             boxStyle,
             imgStyle,
         };
@@ -462,6 +489,37 @@ export default defineComponent({
     background: #fff7e6;
     border-radius: 3px;
     padding: 0 3px;
+}
+
+/* 编辑标记：一排小圆点，鼠标悬停给出文字说明 */
+.edits {
+    position: absolute;
+    left: 6px;
+    top: 5px;
+    display: flex;
+    gap: 3px;
+    padding: 2px 3px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 3px;
+}
+
+.dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: block;
+}
+
+.dot-crop {
+    background: #1677ff;
+}
+
+.dot-mask {
+    background: #cf1322;
+}
+
+.dot-annots {
+    background: #d46b08;
 }
 
 .ghost {

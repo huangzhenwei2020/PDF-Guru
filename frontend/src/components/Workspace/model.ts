@@ -76,6 +76,8 @@ export type RailRow = {
     url: string;
     /** 缩略图是否已渲染出来。未渲染时界面用源页尺寸占位，避免布局跳动 */
     loaded: boolean;
+    /** 该页上有哪些非破坏式操作，用于在缩略图上打标记 */
+    ops: { crop: boolean; masks: number; noAnnots: boolean };
     /** 缩略图原始像素 */
     w: number;
     h: number;
