@@ -143,7 +143,7 @@
 
             <!-- 画布外层：工具条固定在画布上方，画布自身可滚动（放大后要能看别处） -->
             <div class="ws-canvas-wrap">
-                <div class="ws-modes">
+                <div class="ws-modes" ref="modesRef">
                     <a-radio-group v-model:value="mode" size="small" button-style="solid">
                         <a-radio-button value="view">浏览</a-radio-button>
                         <a-radio-button value="crop">裁剪</a-radio-button>
@@ -153,6 +153,7 @@
                         @update:value="onViewModeChange">
                         <a-radio-button value="single">单页</a-radio-button>
                         <a-radio-button value="dual">双页</a-radio-button>
+                        <a-radio-button value="continuous">连续</a-radio-button>
                     </a-radio-group>
 
                     <!-- 缩放：Ctrl+滚轮 或 Ctrl + / Ctrl - -->
@@ -191,22 +192,48 @@
 
                 <!-- 可滚动画布：放大后靠滚动查看其余部分。
                      工具条在上面、不参与滚动，所以放大后缩放按钮仍然够得着。 -->
-                <div ref="canvasRef" class="ws-canvas" @wheel="onCanvasWheel">
+                <div ref="canvasRef" class="ws-canvas" :style="{ paddingTop: modesH + 10 + 'px' }"
+                    @wheel="onCanvasWheel" @scroll="onCanvasScroll">
                     <div v-if="store.previewLoading && !views.length" class="ws-hint">渲染中…</div>
 
-                    <!-- 页面预览。单页视图一列，双页视图并排两列；
-                         两列共用同一个缩放比例，看起来才整齐。
+                    <!-- 页面预览。单页一列，双页并排两列，连续模式纵向铺满全部页；
+                         同一视图内共用同一个缩放比例，看起来才整齐。
                          旋转与缩放分层处理，每层只做一件事，避免多个 transform 揉在一起。 -->
-                    <div v-else-if="views.length" class="pv-row" :class="{ 'pv-draw': mode !== 'view' }">
-                        <div v-for="(v, vi) in views" :key="v.item.id" :ref="(el) => setBoxRef(el, vi)" class="pv-fit"
+                    <div v-else-if="views.length" class="pv-row"
+                        :class="{ 'pv-draw': mode !== 'view', 'pv-col': isCont }">
+                        <div v-for="(v, vi) in views" :key="v.item.id" :ref="(el) => setBoxRef(el, vi)"
+                            class="pv-fit" :data-id="v.item.id" :data-doc="v.item.docId" :data-page="v.item.pageIndex"
                             :style="{ width: v.fitW + 'px', height: v.fitH + 'px' }"
-                            @pointerdown="vi === 0 ? onCanvasDown($event) : undefined">
+                            @pointerdown="(isCont || vi === 0) ? onCanvasDown($event, v.item.id) : undefined">
 
                             <div v-if="v.blank" class="ws-blank">
                                 <file-outlined />
                                 <div>空白页</div>
                                 <small>{{ v.item.paper }} · {{ v.item.orientation === 'landscape' ? '横向' : '纵向' }}</small>
                             </div>
+
+                            <!-- 连续模式：大图按可见性补，没到位就显示占位 -->
+                            <template v-else-if="isCont">
+                                <template v-if="store.previewOf(v.item.docId, v.item.pageIndex)">
+                                    <div class="pv-box" :style="{
+                                        width: v.dispW + 'px',
+                                        height: v.dispH + 'px',
+                                        transform: `scale(${v.scale})`,
+                                    }">
+                                        <img :src="url(store.previewOf(v.item.docId, v.item.pageIndex)!.url)" :style="{
+                                            width: v.imgW + 'px',
+                                            height: v.imgH + 'px',
+                                            transform: `translate(-50%, -50%) rotate(${v.rot}deg)`,
+                                        }" alt="" @error="onImgError" />
+                                    </div>
+                                    <div v-if="v.ov.crop" class="ov-crop" :style="pctStyle(v.ov.crop!)"></div>
+                                    <div v-for="(m, i) in v.ov.masks" :key="i" class="ov-mask"
+                                        :style="Object.assign(pctStyle(m.rect), { background: m.color, opacity: m.opacity })"></div>
+                                    <div v-if="dragRect && drawTargetId === v.item.id" class="ov-drag"
+                                        :style="pctStyle(dragRect)"></div>
+                                </template>
+                                <div v-else class="loadingface"></div>
+                            </template>
 
                             <div v-else-if="v.pending" class="ws-hint">渲染中…</div>
 
@@ -251,11 +278,12 @@
             <!-- autoops 放在最前面：它在末尾时会被窗口右边裁掉，验证时看不到输出 -->
             {{ autoLog }}
             <span v-if="jsErr" class="ws-err">JS错误: {{ jsErr }} · </span>
+            画布={{ canvasSize }} 视图={{ store.viewMode }} 页数={{ views.length }} ·
             来源={{ store.sourceList.length }} · 清单={{ store.seq.length }} · 已选={{ store.selected.length }} ·
             撤销栈={{ store.past.length }} · 重做栈={{ store.future.length }} ·
             当前={{ store.currentPos + 1 }}/{{ store.seq.length }} · 预览 p{{ previewPage }} ·
             缩略图={{ Object.keys(store.thumbs).length }} · 载入中={{ store.previewLoading }} ·
-            theme={{ themeAttr }} · urlMode={{ urlMode }} · 画布={{ canvasSize }}
+            theme={{ themeAttr }} · urlMode={{ urlMode }}
         </div>
 
         <!-- 插入空白页 -->
@@ -492,7 +520,7 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, defineComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { message, Modal } from 'ant-design-vue';
 import {
     CopyOutlined,
@@ -656,10 +684,10 @@ export default defineComponent({
         let ro: ResizeObserver | null = null;
 
         /**
-         * 画布上要显示的页。单页视图一列，双页视图两列。
+         * 单页 / 双页视图：只显示当前页（双页再带一页）。
          * 两列共用同一个缩放比例，否则两页大小不一，看起来像出错。
          */
-        const views = computed(() => {
+        const pagedViews = computed(() => {
             const start = store.currentPos;
             if (start < 0) return [];
             const idxs = store.viewMode === 'dual' ? [start, start + 1] : [start];
@@ -705,7 +733,7 @@ export default defineComponent({
             const n = raw.length;
             const gap = n > 1 ? 16 : 0;
             const availW = Math.max(120, canvasW.value - 30 - gap);
-            const availH = Math.max(120, canvasH.value - 30);
+            const availH = Math.max(120, canvasH.value - modesH.value - 30);
             const perPageW = availW / n;
             let fitScale = 1;
             for (const v of raw) {
@@ -724,17 +752,225 @@ export default defineComponent({
                     scale,
                     fitW: Math.round(v.dispW * scale),
                     fitH: Math.round(v.dispH * scale),
+                    ov: overlayOf(v.item),
                 };
             });
         });
 
-        /** 只有第一格（当前页）参与裁剪/遮盖的框选 */
+        /**
+         * 连续滚动模式：**全部页面**，一次性给出尺寸。
+         *
+         * 尺寸不依赖渲染结果：高度由来源页的点尺寸推出（每页都按同一宽度渲染，
+         * 所以宽度是固定的、只有高度随页面比例变）。这样 500 页也能立刻排出稳定的
+         * 滚动布局，而真正的大图按可见性再补，没到的页先显示占位。
+         *
+         * 这里**不读** previewCache：否则任意一页渲染完成都会让整个列表重算一遍。
+         * 大图由模板按页读取（见 previewOf），Vue 只会重绘那一页。
+         */
+        const contViews = computed(() => {
+            const tierW = store.previewWidth;
+            const raw: any[] = [];
+            let fitScale = 1;
+
+            for (const item of store.seq) {
+                const rot = item.kind === 'page' ? item.rotation || 0 : 0;
+                const rot90 = rot === 90 || rot === 270;
+                let imgH: number;
+                if (item.kind === 'blank') {
+                    imgH = Math.round(tierW * 1.414);
+                } else {
+                    // 用来源页的点尺寸推高度——不用渲染就能知道比例
+                    const pg = store.sources[item.docId]?.pages?.[item.pageIndex];
+                    imgH = pg && pg.width > 0
+                        ? Math.round(tierW * (pg.height / pg.width))
+                        : Math.round(tierW * 1.414);
+                }
+                const dispW = rot90 ? imgH : tierW;
+                const dispH = rot90 ? tierW : imgH;
+                raw.push({ item, imgW: tierW, imgH, dispW, dispH, rot, rot90 });
+            }
+            if (!raw.length) return [];
+
+            // 统一比例：让最宽的一页也能放下
+            const availW = Math.max(120, canvasW.value - 40);
+            for (const v of raw) fitScale = Math.min(fitScale, availW / v.dispW);
+
+            const scale =
+                store.zoomMode === 'fit' ? fitScale : (store.zoom * ZOOM_REF_WIDTH) / tierW;
+            return raw.map((v) => ({
+                ...v,
+                scale,
+                fitW: Math.round(v.dispW * scale),
+                fitH: Math.round(v.dispH * scale),
+                ov: overlayOf(v.item),
+            }));
+        });
+
+        /** 画布上要显示的页：连续模式给全部，其它模式只给当前页（+右页） */
+        const views = computed(() =>
+            store.viewMode === 'continuous' ? contViews.value : pagedViews.value
+        );
+        const isCont = computed(() => store.viewMode === 'continuous');
+
+        /**
+         * 页元素登记。单页/双页只需要第一格（框选固定在那）；
+         * 连续模式每页都要记——框选目标是"指针底下的那一页"。
+         *
+         * 连续模式的登记不从这里做：模板里的 ref 是内联箭头函数，每次重渲染
+         * Vue 都会先用 null 调旧回调、再用新回调，若在这里 observe/unobserve，
+         * 观察往往还没送达就被取消，表现为"一页都不出图"。
+         * 那条路改由 watch + querySelectorAll 统一处理（见 registerContPages）。
+         */
         const setBoxRef = (el: any, vi: number) => {
             if (vi === 0) canvasBoxRef.value = (el as HTMLElement) ?? null;
         };
 
         /** 诊断用：画布以 CSS 像素计的可用尺寸（和截图里的物理像素对比可看出 DPI 缩放） */
         const canvasSize = computed(() => `${Math.round(canvasW.value)}x${Math.round(canvasH.value)}`);
+
+        // --- 连续滚动模式 --------------------------------------------------
+
+        /** 当前真正可见的页（供滚动时挑"最中间的那页"，避免每帧遍历 500 个节点） */
+        const visibleIds = new Set<string>();
+        /** 连续模式：页 id -> 该页的 DOM 节点（框选与滚动定位都要用） */
+        const pageBoxes = new Map<string, HTMLElement>();
+        /** 诊断用：登记了几页 / 观察器回调看到了几页 */
+        const contDbg = ref('');
+        let contObserver: IntersectionObserver | null = null;
+
+        /**
+         * 只给"快要看见"的页渲染大图。
+         * 一次性渲染 500 页会把后端和内存都打满，所以按可见性补；
+         * rootMargin 提前约一屏，正常滚动时基本看不到空白。
+         */
+        const observePage = (el: HTMLElement) => {
+            if (!contObserver) {
+                contObserver = new IntersectionObserver(
+                    (entries) => {
+                        const need: { docId: string; pageIndex: number }[] = [];
+                        for (const en of entries) {
+                            const node = en.target as HTMLElement;
+                            const id = node.dataset.id || '';
+                            if (!id) continue;
+                            if (en.isIntersecting) {
+                                visibleIds.add(id);
+                                const docId = node.dataset.doc || '';
+                                const pageIndex = Number(node.dataset.page);
+                                if (docId && pageIndex >= 0) need.push({ docId, pageIndex });
+                            } else {
+                                visibleIds.delete(id);
+                            }
+                        }
+                        if (need.length) void store.ensurePreviewsFor(need);
+                        contDbg.value = `cb=${entries.length} vis=${visibleIds.size} need=${need.length}`;
+                    },
+                    { root: canvasRef.value, rootMargin: '800px 0px' }
+                );
+            }
+            contObserver.observe(el);
+        };
+
+        /**
+         * 连续模式：每页相对滚动内容的纵向区间，供滚动时二分定位当前页。
+         *
+         * 为什么不从"观察器报告的可见集合"里挑：那个集合有滞后——用户快速滚动时
+         * 它还没更新，实测滚到 5000 会算成第 3 页（实际是第 5 页）。
+         * 注册时算好区间就没有这个问题，而且二分是 O(log n)。
+         */
+        const pageSpans: { id: string; top: number; bottom: number }[] = [];
+
+        /**
+         * 连续模式：把渲染出来的每一页登记到 pageBoxes 并交给可见性观察。
+         *
+         * 用 querySelectorAll 而不是模板 ref 回调，理由见 setBoxRef 的注释：
+         * 内联 ref 回调会在每次重渲染时 observe/unobserve 抖动，观察送不达。
+         */
+        const registerContPages = async () => {
+            await nextTick();
+            if (!isCont.value) {
+                visibleIds.clear();
+                pageBoxes.clear();
+                pageSpans.length = 0;
+                return;
+            }
+            const cv = canvasRef.value;
+            const nodes = cv?.querySelectorAll('.pv-fit') ?? [];
+            const alive = new Set<string>();
+            pageSpans.length = 0;
+            const cvTop = cv ? cv.getBoundingClientRect().top : 0;
+            const st = cv ? cv.scrollTop : 0;
+            nodes.forEach((n) => {
+                const el = n as HTMLElement;
+                const id = el.dataset.id || '';
+                if (!id) return;
+                alive.add(id);
+                pageBoxes.set(id, el);
+                observePage(el);
+                const r = el.getBoundingClientRect();
+                // 换算成"相对滚动内容"的坐标：与当前滚动位置无关，滚动时不用重算
+                pageSpans.push({ id, top: r.top - cvTop + st, bottom: r.bottom - cvTop + st });
+            });
+            pageSpans.sort((a, b) => a.top - b.top);
+            // 已经不存在的页（删页/换文档）要从观察里摘掉，否则会一直占着
+            for (const id of Array.from(pageBoxes.keys())) {
+                if (alive.has(id)) continue;
+                const el = pageBoxes.get(id);
+                if (el) contObserver?.unobserve(el);
+                visibleIds.delete(id);
+                pageBoxes.delete(id);
+            }
+            contDbg.value = `reg=${nodes.length} obs=${alive.size} root=${contObserver ? 'ok' : '-'}`;
+        };
+
+        watch(
+            () => [isCont.value, store.seq.length, store.previewWidth] as const,
+            () => {
+                void registerContPages();
+            }
+        );
+
+        /**
+         * 滚动时把"离视口中心最近且可见"的那一页设为当前页。
+         *
+         * 只改 store.current，不调 focusItem：大图已经由可见性观察按需加载，
+         * 再走 focusItem 会多渲染一次，而且会把 preview/previewB 这两个
+         * "单页视图专用槽位"搅乱。
+         */
+        let scrollRaf = 0;
+        const onCanvasScroll = () => {
+            if (!isCont.value || scrollRaf) return;
+            scrollRaf = requestAnimationFrame(() => {
+                scrollRaf = 0;
+                const el = canvasRef.value;
+                if (!el || !pageSpans.length) return;
+                // 视口中线落在哪一页：二分找最后一个 top <= mid 的页
+                const mid = el.scrollTop + el.clientHeight / 2;
+                let lo = 0;
+                let hi = pageSpans.length - 1;
+                let best = pageSpans[0].id;
+                while (lo <= hi) {
+                    const m = (lo + hi) >> 1;
+                    if (pageSpans[m].top <= mid) {
+                        best = pageSpans[m].id;
+                        lo = m + 1;
+                    } else {
+                        hi = m - 1;
+                    }
+                }
+                if (best && best !== store.current) store.current = best;
+            });
+        };
+
+        /** 把当前页滚到视野里（切换视图模式/键盘翻页后用） */
+        const scrollCurrentIntoView = () => {
+            const node = pageBoxes.get(store.current);
+            node?.scrollIntoView({ block: 'start' });
+        };
+
+        /** 工具条高度：画布要给它让出位置，否则页面上沿被压住 */
+        const modesRef = ref<HTMLElement | null>(null);
+        const modesH = ref(52);
+        let modesRo: ResizeObserver | null = null;
 
         // --- 缩放 ---------------------------------------------------------
 
@@ -791,7 +1027,17 @@ export default defineComponent({
         ];
         // 模板里不能写带类型标注的箭头函数（模板编译器用的是 JS 解析器），
         // 因此这类回调统一在 setup 里定义
-        const onViewModeChange = (v: any) => store.setViewMode(v);
+        const onViewModeChange = (v: any) => {
+            const wasCont = store.viewMode === 'continuous';
+            store.setViewMode(v);
+            if (v === 'continuous') {
+                // 从单页切过来：把当前页滚进视野（切换前大图只加载了当前页）
+                nextTick(() => scrollCurrentIntoView());
+            } else if (wasCont && store.current) {
+                // 从连续切回去：大图槽位还停在别的页，重新聚焦一次
+                void store.focusItem(store.current);
+            }
+        };
         const onThumbWidthChange = (v: any) => store.setThumbWidth(v);
         /** 诊断用：模板里不能直接引用 document，这里包一层 */
         const themeAttr = computed(() => document.documentElement.dataset.theme || 'light');
@@ -820,6 +1066,8 @@ export default defineComponent({
         const maskOpacity = ref(1);
         const canvasBoxRef = ref<HTMLElement | null>(null);
         const dragRect = ref<NormRect | null>(null);
+        /** 正在框选的是哪一页（连续模式下要把回显画在正确的那一页上） */
+        const drawTargetId = ref<string>('');
         let dragFrom: { x: number; y: number } | null = null;
 
         const pctStyle = (r: NormRect) => ({
@@ -829,22 +1077,28 @@ export default defineComponent({
             height: `${r.h * 100}%`,
         });
 
-        /** 当前页已有操作的回显。换算回显示空间，因此页面旋转后框仍落在正确位置。 */
-        const overlay = computed(() => {
-            const it = store.currentItem;
+        /**
+         * 某一页已有操作的回显。换算回显示空间，因此页面旋转后框仍落在正确位置。
+         *
+         * 连续模式要每页各画各的，所以做成按页取值的函数而不是"只算当前页"的计算属性。
+         */
+        const overlayOf = (it: any) => {
             if (!it || it.kind !== 'page') {
                 return { crop: null as NormRect | null, masks: [] as { rect: NormRect; color: string; opacity: number }[] };
             }
             const total = (store.pageInfoOf(it)?.rotation ?? 0) + (it.rotation || 0);
             return {
                 crop: it.ops?.crop ? pageRectToDisplayRect(it.ops.crop, total) : null,
-                masks: (it.ops?.masks ?? []).map((m) => ({
+                masks: (it.ops?.masks ?? []).map((m: any) => ({
                     rect: pageRectToDisplayRect(m.rect, total),
                     color: m.color,
                     opacity: m.opacity,
                 })),
             };
-        });
+        };
+
+        /** 当前页的操作回显（单页/双页视图用） */
+        const overlay = computed(() => overlayOf(store.currentItem));
 
         const relPos = (e: PointerEvent, el: HTMLElement) => {
             const r = el.getBoundingClientRect();
@@ -883,6 +1137,7 @@ export default defineComponent({
             const r = dragRect.value;
             dragFrom = null;
             dragRect.value = null;
+            drawTargetId.value = '';
             if (!r) return;
             const clamped = clampRect(r);
             if (!clamped) {
@@ -892,8 +1147,18 @@ export default defineComponent({
             applyOp(clamped);
         };
 
-        const onCanvasDown = (e: PointerEvent) => {
+        const onCanvasDown = (e: PointerEvent, id?: string) => {
             if (mode.value === 'view' || e.button !== 0) return;
+            // 连续模式：框选目标是"指针底下的那一页"，而不是永远第一格。
+            // 同时把它设为当前页——这样"没选中任何页时作用于当前页"的既有语义
+            // 在连续模式下也成立，不必另开一套规则。
+            if (id && isCont.value) {
+                const el = pageBoxes.get(id);
+                if (!el) return;
+                canvasBoxRef.value = el;
+                drawTargetId.value = id;
+                store.current = id;
+            }
             const el = canvasBoxRef.value;
             if (!el) return;
             e.preventDefault();
@@ -1401,6 +1666,15 @@ export default defineComponent({
                 });
                 ro.observe(canvasRef.value);
             }
+            // 工具条会换行，高度不固定，所以量一次、变了再更新
+            if (modesRef.value && typeof ResizeObserver !== 'undefined') {
+                modesRo = new ResizeObserver(() => {
+                    const h = modesRef.value?.offsetHeight ?? 0;
+                    if (h && Math.abs(h - modesH.value) > 2) modesH.value = h;
+                });
+                modesRo.observe(modesRef.value);
+                modesH.value = modesRef.value.offsetHeight || modesH.value;
+            }
 
             // 无人值守验证钩子：自动打开文档并执行一段操作脚本
             try {
@@ -1422,6 +1696,14 @@ export default defineComponent({
                             handleDrop: (x: number, y: number, paths: string[]) =>
                                 handleFileDrop(x, y, paths),
                             zoomPct: () => zoomPct.value,
+                            contDbg: () => contDbg.value,
+                            setMode: (m: 'view' | 'crop' | 'mask') => {
+                                mode.value = m;
+                            },
+                            scrollCanvas: (y: number) => {
+                                const el = canvasRef.value;
+                                if (el) el.scrollTop = y;
+                            },
                         });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
@@ -1437,6 +1719,8 @@ export default defineComponent({
             window.removeEventListener('keydown', onKey);
             OnFileDropOff();
             if (ro) ro.disconnect();
+            if (modesRo) modesRo.disconnect();
+            if (contObserver) contObserver.disconnect();
         });
 
         return {
@@ -1453,6 +1737,12 @@ export default defineComponent({
             views,
             setBoxRef,
             canvasSize,
+            isCont,
+            modesRef,
+            modesH,
+            onCanvasScroll,
+            drawTargetId,
+            contDbg,
             // 缩放
             zoomPct,
             zoomBy,
@@ -1601,6 +1891,8 @@ export default defineComponent({
     /* 始终预留滚动条位置：否则放大时滚动条出现会改变可用宽度，
        触发"测量 -> 重排 -> 再测量"的来回抖动 */
     scrollbar-gutter: stable;
+    /* 内容自身的尺寸说了算，别被容器拉伸（连续模式下列容器被拉伸会导致子项被压扁） */
+    align-items: flex-start;
     background: var(--ws-bg-canvas);
     padding: 12px;
 }
@@ -1646,6 +1938,25 @@ export default defineComponent({
     align-items: center;
     justify-content: center;
     gap: 16px;
+}
+
+/* 连续滚动：纵向排列、页间留缝，整体从顶部开始（内容比容器高，不能用 auto 居中） */
+.pv-row.pv-col {
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin: 0 auto;
+    padding-bottom: 24px;
+}
+
+/*
+ * 关键：列向 flex 容器里的页必须禁止收缩。
+ * 否则容器会被拉伸成画布高度，而 60 个子项默认 flex-shrink:1 会一起被压扁——
+ * 实测内联样式明明是 787x1114，getBoundingClientRect 却只有 787x0，
+ * 表现为"画布一片空白、也滚不动"。
+ */
+.pv-row.pv-col > .pv-fit {
+    flex: 0 0 auto;
 }
 
 .pv-fit {

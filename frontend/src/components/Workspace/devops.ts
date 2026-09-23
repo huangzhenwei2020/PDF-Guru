@@ -142,7 +142,11 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 break;
             }
             case "viewmode": {
-                store.setViewMode(arg === "dual" ? "dual" : "single");
+                const m =
+                    arg === "dual" ? "dual" : arg === "continuous" || arg === "cont" ? "continuous" : "single";
+                store.setViewMode(m);
+                // 等两帧让模板按新模式重排，后续的检查/测量才看得到真实 DOM
+                await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
                 log.push(`viewmode:${store.viewMode}`);
                 break;
             }
@@ -242,6 +246,82 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                     );
                 }
                 log.push(`wheel:${dy} x${times} 之前=${before} 之后=${store.zoomMode}/${Math.round(store.zoom * 100) / 100}`);
+                break;
+            }
+            // contcheck —— 连续模式的规模/按需渲染情况（刻意写短：诊断条是单行，长了会被窗口裁掉）
+            case "contcheck": {
+                const rows = document.querySelectorAll(".pv-col .pv-fit") as NodeListOf<HTMLElement>;
+                const imgs = document.querySelectorAll(".pv-col .pv-fit img").length;
+                const first = rows[0];
+                const r = first?.getBoundingClientRect();
+                const col = document.querySelector(".pv-col") as HTMLElement | null;
+                const cr = col?.getBoundingClientRect();
+                const cv = document.querySelector(".ws-canvas") as HTMLElement | null;
+                void cr;
+                log.push(
+                    `obs=[${ui?.contDbg?.() || "-"}] rows=${rows.length} imgs=${imgs}` +
+                        ` cache=${Object.keys(store.previewCache).length}` +
+                        ` row0h=${r ? Math.round(r.height) : "-"} scrollH=${cv?.scrollHeight ?? "-"} pv=[${store.previewDebug}]`
+                );
+                break;
+            }
+            // scroll:<像素> —— 滚动画布，验证"滚动 -> 当前页跟随"
+            case "scroll": {
+                ui?.scrollCanvas?.(Number(arg) || 0);
+                // 等一帧滚动处理 + 一帧按需加载
+                await new Promise((r) => setTimeout(r, 500));
+                log.push(
+                    `scroll:${arg} 当前页=${store.currentPos + 1}/${store.seq.length} 缓存大图=${Object.keys(store.previewCache).length}`
+                );
+                break;
+            }
+            // mode:view|crop|mask —— 切换画布模式
+            case "mode": {
+                ui?.setMode?.(arg === "crop" ? "crop" : arg === "mask" ? "mask" : "view");
+                log.push(`mode:${arg}`);
+                break;
+            }
+            // wait:<毫秒> —— 让脚本停一会儿，便于外部脚本在这段时间里做输入
+            case "wait": {
+                await new Promise((r) => setTimeout(r, parseInt(arg, 10) || 1000));
+                break;
+            }
+            // pdrag:<第几页>,<起x>,<起y>,<终x>,<终y> —— 在指定页上合成一次框选拖拽。
+            // 坐标是相对该页的归一化值；走的是与真实鼠标完全相同的处理链
+            // （pointerdown -> window pointermove/up -> 坐标换算 -> 落库）。
+            case "pdrag": {
+                const parts = arg.split(",");
+                const n = parseInt(parts[0], 10) || 1;
+                const x0 = parseFloat(parts[1] ?? "0.2");
+                const y0 = parseFloat(parts[2] ?? "0.2");
+                const x1 = parseFloat(parts[3] ?? "0.6");
+                const y1 = parseFloat(parts[4] ?? "0.6");
+                const rows = document.querySelectorAll(".pv-fit") as NodeListOf<HTMLElement>;
+                const el = rows[n - 1];
+                if (!el) {
+                    log.push(`pdrag:没有第${n}页`);
+                    break;
+                }
+                const r = el.getBoundingClientRect();
+                const mk = (type: string, fx: number, fy: number, target: EventTarget) =>
+                    target.dispatchEvent(
+                        new PointerEvent(type, {
+                            clientX: r.left + r.width * fx,
+                            clientY: r.top + r.height * fy,
+                            button: 0,
+                            buttons: 1,
+                            bubbles: true,
+                            cancelable: true,
+                        })
+                    );
+                mk("pointerdown", x0, y0, el);
+                mk("pointermove", x1, y1, window);
+                mk("pointerup", x1, y1, window);
+                await new Promise((res) => setTimeout(res, 300));
+                const hit = store.seq
+                    .map((it: any, i: number) => (it.kind === "page" && it.ops?.crop ? i + 1 : 0))
+                    .filter(Boolean);
+                log.push(`pdrag:第${n}页 -> 有裁剪的页=[${hit.join(",")}] 当前页=${store.currentPos + 1}`);
                 break;
             }
             // zoom:<倍数>|fit —— 驱动缩放

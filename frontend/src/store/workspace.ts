@@ -216,7 +216,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         /** 缩略图宽度。视图偏好，刻意不计入"未保存"判定 */
         thumbWidth: 150,
         /** 画布视图：单页 / 双页。同样是视图偏好 */
-        viewMode: "single" as "single" | "dual",
+        viewMode: "single" as "single" | "dual" | "continuous",
         /** 画布缩放：绝对倍数（1 = 渲染图 1 像素对 1 CSS 像素）。视图偏好，不计入未保存 */
         zoom: 1,
         /** "fit" = 自动适应窗口（随窗口大小变化）；"custom" = 用户指定倍数 */
@@ -227,6 +227,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         cacheRoot: "",
         loading: false,
         previewLoading: false,
+        /** 诊断用：连续模式批量取图的逐步结果 */
+        previewDebug: "",
         error: "",
         /** 导出期装饰（水印/页码/页眉页脚）。改动同样算"编辑"，要进未保存判定 */
         decor: defaultDecor(),
@@ -357,7 +359,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.thumbAsked = {};
         },
 
-        setViewMode(mode: "single" | "dual") {
+        setViewMode(mode: "single" | "dual" | "continuous") {
             if (mode === this.viewMode) return;
             this.viewMode = mode;
             if (this.current) this.focusItem(this.current);
@@ -600,6 +602,50 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             const got = await task;
             if (got) this.previewCache[key] = got;
             return got;
+        },
+
+        /** 连续模式：读取已缓存的预览（响应式读法）。没有就返回 null。 */
+        previewOf(docId: string, pageIndex: number): WSThumb | null {
+            return this.previewCache[this.previewKey(docId, pageIndex)] ?? null;
+        },
+
+        /**
+         * 连续模式：为一批页面补齐大图。
+         *
+         * 与 focusItem 的区别：focusItem 只维护"当前页（+ 右页）"两个槽位，
+         * 而连续模式要同时显示很多页，所以结果直接进 previewCache，由模板按页读取。
+         * 并发去重沿用 inflightPreviews，因此来回滚动不会重复渲染同一页。
+         */
+        async ensurePreviewsFor(targets: { docId: string; pageIndex: number }[]) {
+            const jobs: Promise<unknown>[] = [];
+            const trace: string[] = [];
+            for (const t of targets) {
+                const key = this.previewKey(t.docId, t.pageIndex);
+                if (this.previewCache[key]) {
+                    trace.push(`${t.pageIndex}:cached`);
+                    continue;
+                }
+                trace.push(`${t.pageIndex}:fetch`);
+                jobs.push(
+                    // 必须带上 kind —— fetchPreview 第一行就是 `if (item.kind !== "page") return null`，
+                    // 少了它会被静默当成非页面直接返回 null：不发请求、不报错、缓存也不动，
+                    // 表现为"连续模式一片空白"。这个坑很隐蔽，因为返回的是 null 而不是异常。
+                    this.fetchPreview({ kind: "page", docId: t.docId, pageIndex: t.pageIndex } as any)
+                        .then((g) => {
+                            trace.push(`${t.pageIndex}:${g ? "got" : "empty"}`);
+                            return g;
+                        })
+                        .catch((e: any) => {
+                            // 不能吞掉：连续模式下这一批失败会表现为"一片空白且毫无提示"
+                            trace.push(`${t.pageIndex}:err`);
+                            this.error = String(e?.message ?? e);
+                            return null;
+                        })
+                );
+            }
+            if (jobs.length) await Promise.all(jobs);
+            // 结算之后再记：在此之前记下的只是"发出请求时"的状态
+            this.previewDebug = trace.join(",");
         },
 
         /** 聚焦到某一项并加载大图（双页视图会连带加载右页）。 */
