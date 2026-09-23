@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 func (a *App) PDFConversion(
@@ -59,7 +57,6 @@ func (a *App) ConvertPDF2Docx(
 	logger.Printf("inFile: %s, outFile: %s\n", inFile, outFile)
 	path, err := os.Executable()
 	if err != nil {
-		err = errors.Wrap(err, "")
 		logger.Errorln("Error:", err)
 		return err
 	}

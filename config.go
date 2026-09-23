@@ -34,7 +34,6 @@ func (a *App) SaveConfig(pdfPath string, pythonPath string, tesseractPath string
 	// 获取配置文件路径
 	path, err := os.Executable()
 	if err != nil {
-		err = errors.Wrap(err, "")
 		logger.Errorln("Error:", err)
 		return err
 	}
@@ -47,7 +46,6 @@ func (a *App) SaveConfig(pdfPath string, pythonPath string, tesseractPath string
 	}
 	err = os.WriteFile(configPath, jsonData, 0644)
 	if err != nil {
-		err = errors.Wrap(err, "")
 		logger.Errorln("Error:", err)
 		return err
 	}
@@ -60,7 +58,6 @@ func (a *App) LoadConfig() (MyConfig, error) {
 	// 获取配置文件路径
 	path, err := os.Executable()
 	if err != nil {
-		err = errors.Wrap(err, "")
 		logger.Errorln("Error:", err)
 		return config, err
 	}
@@ -72,7 +69,6 @@ func (a *App) LoadConfig() (MyConfig, error) {
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		path, err := os.Executable()
 		if err != nil {
-			err = errors.Wrap(err, "")
 			logger.Errorln("Error:", err)
 			return config, err
 		}
@@ -84,18 +80,15 @@ func (a *App) LoadConfig() (MyConfig, error) {
 		}
 		err = a.SaveConfig(pdfPath, "", "", "", "")
 		if err != nil {
-			err = errors.Wrap(err, "")
 			return config, err
 		}
 	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		err = errors.Wrap(err, "")
 		return config, err
 	}
 	err = json.Unmarshal(data, &config)
 	if err != nil {
-		err = errors.Wrap(err, "")
 		return config, err
 	}
 	return config, nil

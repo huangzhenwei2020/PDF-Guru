@@ -6,7 +6,6 @@ import (
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
-	"github.com/pkg/errors"
 )
 
 func (a *App) CompressPDF(inFile string, outFile string) error {
@@ -24,7 +23,6 @@ func (a *App) CompressPDF(inFile string, outFile string) error {
 	}
 	err := api.OptimizeFile(inFile, outFile, conf)
 	if err != nil {
-		err = errors.Wrap(err, "")
 		return err
 	}
 	return nil

@@ -22,7 +22,6 @@ func (a *App) CheckFileExists(path string) error {
 	if strings.Contains(path, "*") {
 		matches, err := filepath.Glob(path)
 		if err != nil {
-			err = errors.Wrap(err, "")
 			return err
 		}
 		if len(matches) == 0 {

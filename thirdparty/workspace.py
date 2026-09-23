@@ -34,10 +34,59 @@ from watermark import create_text_wartmark
 MANIFEST_TEMPLATE = "_manifest_w{width}.json"
 
 
+def _explain_open_error(path: str, exc: Exception) -> str:
+    """把 PyMuPDF 的底层异常翻译成用户看得懂的一句话。
+
+    它的原始信息是英文堆栈（"document closed or encrypted"、"no objects found"），
+    直接显示在界面上等于没提示——用户既不知道发生了什么，也不知道该怎么办。
+    """
+    msg = str(exc).lower()
+    if "encrypted" in msg or "password" in msg or "needs_pass" in msg:
+        return "这个 PDF 有密码，需要先解密（工具箱 → 保护 → 去除密码）"
+    # "failed to open file ... as type pdf"（FileDataError）、"no objects found"（FzErrorFormat）
+    # 都表示文件本身不是有效的 PDF，而不是路径或权限问题
+    if any(k in msg for k in ("no objects", "cannot open", "failed to open", "format", "corrupt", "damaged")):
+        return f"无法打开 {Path(path).name}：文件已损坏，或者它并不是 PDF"
+    return f"无法打开 {Path(path).name}"
+
+
+def _open_document(path: str) -> fitz.Document:
+    """打开文档，失败时抛出**用户看得懂**的 ValueError。
+
+    注意：有密码的文档 fitz.open() 本身会成功，要等真正读页时才炸，
+    所以这里额外检查 needs_pass，否则错误会晚一步、出现在毫不相干的代码位置上。
+    """
+    try:
+        doc = fitz.open(path)
+    except Exception as e:
+        raise ValueError(_explain_open_error(path, e)) from e
+    if getattr(doc, "needs_pass", False):
+        doc.close()
+        raise ValueError("这个 PDF 有密码，需要先解密（工具箱 → 保护 → 去除密码）")
+    if doc.page_count <= 0:
+        doc.close()
+        raise ValueError(f"{Path(path).name} 里没有任何页面")
+    return doc
+
+
+def _fail(exc: Exception):
+    """把失败写进状态文件。
+
+    已知的用户级错误（ValueError）只回一句话；意料之外的异常记完整堆栈到日志，
+    但只把简短信息交给界面——界面需要的是"能转述给人听"的内容。
+    """
+    if isinstance(exc, ValueError):
+        msg = str(exc)
+    else:
+        logger.error(traceback.format_exc())
+        msg = f"{type(exc).__name__}: {exc}"
+    utils.dump_json(cmd_output_path, {"status": "error", "message": msg})
+
+
 def workspace_info(doc_path: str, output_path: str):
     """导出文档结构到 output_path（JSON）。"""
     try:
-        doc: fitz.Document = fitz.open(doc_path)
+        doc = _open_document(doc_path)
         pages = []
         for i in range(doc.page_count):
             page = doc[i]
@@ -53,9 +102,8 @@ def workspace_info(doc_path: str, output_path: str):
         })
         doc.close()
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
-    except:
-        logger.error(traceback.format_exc())
-        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+    except Exception as e:
+        _fail(e)
 
 
 def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, manifest_path: str = None):
@@ -66,7 +114,7 @@ def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, man
     的页码与文件名，表现为"请求第 2 页却显示第 3 页"（实测踩到过）。
     """
     try:
-        doc: fitz.Document = fitz.open(doc_path)
+        doc = _open_document(doc_path)
         out = Path(output_dir)
         out.mkdir(parents=True, exist_ok=True)
         indices = utils.parse_range(pages, doc.page_count)
@@ -121,9 +169,8 @@ def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, man
         utils.dump_json(str(mpath), {"width": width, "pages": manifest})
         doc.close()
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
-    except:
-        logger.error(traceback.format_exc())
-        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+    except Exception as e:
+        _fail(e)
 
 
 def workspace_convert(input_path: str, output_path: str):
@@ -135,7 +182,7 @@ def workspace_convert(input_path: str, output_path: str):
     而不是产出一个坏文件——上层据此给出明确提示。
     """
     try:
-        doc: fitz.Document = fitz.open(input_path)  # 打不开会直接抛异常
+        doc = _open_document(input_path)
         pdf = fitz.open("pdf", doc.convert_to_pdf())
         # 尽量保留目录，阅读体验会好很多
         try:
@@ -149,9 +196,8 @@ def workspace_convert(input_path: str, output_path: str):
         pdf.close()
         doc.close()
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
-    except:
-        logger.error(traceback.format_exc())
-        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+    except Exception as e:
+        _fail(e)
 
 
 def workspace_merge_images(input_paths: list, output_path: str):
@@ -163,7 +209,7 @@ def workspace_merge_images(input_paths: list, output_path: str):
     try:
         writer: fitz.Document = fitz.open()
         for p in input_paths:
-            img = fitz.open(p)
+            img = _open_document(p)
             pdf = fitz.open("pdf", img.convert_to_pdf())
             writer.insert_pdf(pdf)
             pdf.close()
@@ -174,9 +220,8 @@ def workspace_merge_images(input_paths: list, output_path: str):
         writer.save(output_path, garbage=4, deflate=True)
         writer.close()
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
-    except:
-        logger.error(traceback.format_exc())
-        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+    except Exception as e:
+        _fail(e)
 
 
 def _overlay_via_mask(width, height, content_list, tmpdir, tag,
@@ -415,11 +460,10 @@ def workspace_build(plan_path: str, output_path: str, compress: bool = False):
 
         os.replace(tmp, output_path)
         utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
-    except:
+    except Exception as e:
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
         except Exception:
             pass
-        logger.error(traceback.format_exc())
-        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+        _fail(e)

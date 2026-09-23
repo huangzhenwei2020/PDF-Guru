@@ -59,7 +59,6 @@ func GetCmdStatusAndMessage(cmd *exec.Cmd, cmdType string) error {
 func (a *App) cmdRunner(args []string, cmdType string) error {
 	config, err := a.LoadConfig()
 	if err != nil {
-		err = errors.Wrap(err, "")
 		return err
 	}
 	var cmd *exec.Cmd
@@ -108,7 +107,6 @@ func (a *App) cmdRunner(args []string, cmdType string) error {
 	}
 	err = GetCmdStatusAndMessage(cmd, cmdType)
 	if err != nil {
-		err = errors.Wrap(err, "")
 		return err
 	}
 	return nil
