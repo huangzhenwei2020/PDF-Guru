@@ -159,6 +159,24 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 }
                 break;
             }
+            // open:<路径> —— 打开另一个文档。用于验证"重置工作区"是否彻底
+            // （$patch 对普通对象是递归合并，曾经导致旧来源残留）
+            case "open": {
+                try {
+                    await store.open(arg);
+                    log.push(`open:${arg} -> 来源=${Object.keys(store.sources).length} 清单=${store.seq.length}`);
+                } catch (e: any) {
+                    log.push(`open 失败: ${e?.message ?? e}`);
+                }
+                break;
+            }
+            // newdoc:N —— 新建含 N 张空白页的文档（没有来源文件）
+            case "newdoc": {
+                const n = parseInt(arg, 10) || 1;
+                store.newDocument(n, "A4", "portrait");
+                log.push(`newdoc:${n}`);
+                break;
+            }
             case "ctxmenu": {
                 const [x, y] = (arg || "360,300").split(",").map(Number);
                 ui?.openCtx?.(x, y);

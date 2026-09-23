@@ -244,10 +244,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         mainPath(state): string {
             return Object.values(state.sources)[0]?.path ?? "";
         },
-        /** 界面标题：用第一个来源的文件名 */
+        /** 界面标题：用第一个来源的文件名；没有来源说明是新建的文档 */
         title(state): string {
             const first = Object.values(state.sources)[0];
-            if (!first) return "";
+            if (!first) return state.seq.length ? "未命名文档" : "";
             const n = Object.keys(state.sources).length;
             return n > 1 ? `${baseName(first.path)} 等 ${n} 个文档` : baseName(first.path);
         },
@@ -311,24 +311,36 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             return this.sources[item.docId]?.pages?.[item.pageIndex] ?? null;
         },
 
+        /**
+         * 清空工作区。
+         *
+         * **必须逐字段直接赋值，不能用 `this.$patch({...})`。**
+         * Pinia 的 $patch 传对象时，对普通对象字段做的是**递归合并**而不是整体替换，
+         * 于是 `sources: {}` 并不会清掉已有来源——表现为同一会话里第二次打开文档时
+         * 旧文档的来源残留：来源数变多、标题显示成上一个文件、缩略图缓存串味。
+         * （这个坑是加「新建」时暴露出来的：新建后标题仍显示上一次打开的文件名。）
+         */
         reset() {
-            this.$patch({
-                sources: {},
-                seq: [],
-                selected: [],
-                anchor: "",
-                current: "",
-                thumbs: {},
-                thumbAsked: {},
-                previewCache: {},
-                preview: null,
-                past: [],
-                future: [],
-                error: "",
-                dirty: false,
-                savedSig: "",
-                decor: defaultDecor(),
-            });
+            this.sources = {};
+            this.seq = [];
+            this.selected = [];
+            this.anchor = "";
+            this.current = "";
+            this.thumbs = {};
+            this.thumbAsked = {};
+            this.previewCache = {};
+            this.preview = null;
+            this.previewB = null;
+            this.past = [];
+            this.future = [];
+            this.error = "";
+            this.dirty = false;
+            this.savedSig = "";
+            this.decor = defaultDecor();
+            // 在途请求的缓存也要清：虽然 docId 单调递增不会撞键，
+            // 但留着旧文档的条目没有意义
+            inflightThumbs.clear();
+            inflightPreviews.clear();
         },
 
         // --- 与后端交互 ---------------------------------------------------
@@ -371,6 +383,26 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 pages: info?.pages ?? [],
             };
             return docId;
+        },
+
+        /**
+         * 新建一份空文档：只有空白页，没有任何来源文件。
+         *
+         * 与"打开 PDF"的区别是没有来源，所以「保存」没有目标文件（按钮自动禁用），
+         * 要先用「导出」指定路径；导出成功后输出文件会成为这份文档的文件。
+         */
+        newDocument(count = 1, paper = "A4", orientation: "portrait" | "landscape" = "portrait") {
+            this.reset();
+            const n = Math.max(1, Math.min(200, Math.floor(count)));
+            const items: WSItem[] = [];
+            for (let i = 0; i < n; i++) {
+                items.push(createBlankItem(paper, orientation));
+            }
+            this.seq = items;
+            this.current = items[0].id;
+            this.anchor = "";
+            // 新文档还没落盘，与"已保存指纹"必定不同，因此直接就是未保存状态
+            this.syncDirty();
         },
 
         /** 打开一个文档作为工作区的内容（会清空当前清单）。 */
@@ -861,8 +893,11 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 const msg: string = await WorkspaceBuild(payload, outFile, compress, backup);
                 // 输出文件若正好是某个来源，那份来源的内容已经被改写，
                 // 清单里指向它的页下标就失效了，必须重新加载，否则后续导出会串页。
+                // 新建的文档（没有来源）另存为之后，也把输出文件当作它的文件，
+                // 这样「保存」就能用了——与桌面软件"另存为"的直觉一致。
+                const noSource = Object.keys(this.sources).length === 0;
                 const hitSource = Object.values(this.sources).some((s) => s.path === outFile);
-                if (hitSource) {
+                if (hitSource || noSource) {
                     await this.open(outFile);
                 } else if (scope === "all") {
                     // 全部内容已落盘，视为没有未保存的更改

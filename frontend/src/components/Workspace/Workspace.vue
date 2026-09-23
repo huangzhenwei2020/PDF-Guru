@@ -2,6 +2,14 @@
     <div class="ws">
         <!-- 工具栏 -->
         <div class="ws-toolbar">
+            <a-tooltip title="新建一份只有空白页的文档，再用「插入」把 PDF 的页面取进来">
+                <a-button :disabled="store.loading" @click="askNew">
+                    <template #icon>
+                        <file-add-outlined />
+                    </template>
+                    新建
+                </a-button>
+            </a-tooltip>
             <a-button type="primary" :loading="store.loading" @click="pickFile">
                 <template #icon>
                     <folder-open-outlined />
@@ -112,6 +120,9 @@
             <a-button size="small" :disabled="!store.selected.length" @click="store.clearSelection()">取消选择</a-button>
 
             <span class="ws-spacer"></span>
+            <span v-if="store.title" class="ws-title" :title="store.mainPath || '尚未保存到文件'">
+                {{ store.title }}
+            </span>
             <a-tag v-if="store.dirty" color="orange">未保存</a-tag>
             <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
             <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
@@ -220,7 +231,8 @@
         <div class="ws-diag">
             来源={{ store.sourceList.length }} · 清单={{ store.seq.length }} · 已选={{ store.selected.length }} ·
             撤销栈={{ store.past.length }} · 重做栈={{ store.future.length }} ·
-            当前={{ store.currentPos + 1 }}/{{ store.seq.length }} · 预览 p{{ previewPage }} · urlMode={{ urlMode }}
+            当前={{ store.currentPos + 1 }}/{{ store.seq.length }} · 预览 p{{ previewPage }} ·
+            title={{ JSON.stringify(store.title) }} · urlMode={{ urlMode }}
             {{ autoLog }}
         </div>
 
@@ -418,6 +430,28 @@
                 </div>
             </template>
         </a-modal>
+        <!-- 新建文档 -->
+        <a-modal v-model:visible="newVisible" title="新建文档" ok-text="创建" cancel-text="取消" @ok="doNew">
+            <a-form layout="vertical">
+                <a-form-item label="纸张">
+                    <a-select v-model:value="newPaper" style="width: 140px" :options="paperOptions" />
+                </a-form-item>
+                <a-form-item label="方向">
+                    <a-radio-group v-model:value="newOrientation">
+                        <a-radio-button value="portrait">纵向</a-radio-button>
+                        <a-radio-button value="landscape">横向</a-radio-button>
+                    </a-radio-group>
+                </a-form-item>
+                <a-form-item label="页数">
+                    <a-input-number v-model:value="newCount" :min="1" :max="200" />
+                </a-form-item>
+            </a-form>
+            <div class="ws-note">
+                新建后可以用「插入」把别的 PDF 页面取进来，或继续添加空白页。
+                这份文档还没有对应的文件，「保存」要先用「导出」指定一个路径。
+            </div>
+        </a-modal>
+
         <!-- 缩略图右键菜单：固定定位跟随鼠标，点别处即关闭 -->
         <div v-if="ctxVisible" class="ctx-mask" @click="ctxVisible = false" @contextmenu.prevent="ctxVisible = false">
             <a-menu class="ctx-menu" :style="{ left: ctxX + 'px', top: ctxY + 'px' }" @click="onCtxAction">
@@ -443,6 +477,7 @@ import {
     DeleteOutlined,
     DownOutlined,
     ExportOutlined,
+    FileAddOutlined,
     FileOutlined,
     FolderOpenOutlined,
     FontSizeOutlined,
@@ -475,6 +510,7 @@ export default defineComponent({
         DeleteOutlined,
         DownOutlined,
         ExportOutlined,
+        FileAddOutlined,
         FileOutlined,
         FolderOpenOutlined,
         FontSizeOutlined,
@@ -1063,6 +1099,36 @@ export default defineComponent({
             }
         };
 
+        // --- 新建文档 -----------------------------------------------------
+
+        const newVisible = ref(false);
+        const newPaper = ref('A4');
+        const newOrientation = ref<'portrait' | 'landscape'>('portrait');
+        const newCount = ref(1);
+        const paperOptions = [{ value: 'A4' }, { value: 'A3' }, { value: 'A5' }, { value: 'Letter' }];
+
+        const askNew = () => {
+            // 有未保存内容时先确认，否则新建会把它们直接冲掉
+            if (store.dirty && store.seq.length) {
+                Modal.confirm({
+                    title: '新建会替换当前工作区',
+                    content: '当前工作区有未保存的更改，新建之后这些改动会丢失。',
+                    okText: '继续新建',
+                    cancelText: '取消',
+                    onOk: () => {
+                        newVisible.value = true;
+                    },
+                });
+                return;
+            }
+            newVisible.value = true;
+        };
+
+        const doNew = () => {
+            store.newDocument(newCount.value, newPaper.value, newOrientation.value);
+            newVisible.value = false;
+        };
+
         // --- 其它交互 -----------------------------------------------------
 
         const onNeedThumbs = (ids: string[]) => {
@@ -1211,6 +1277,14 @@ export default defineComponent({
             ctxY,
             onCtx,
             onCtxAction,
+            // 新建文档
+            askNew,
+            doNew,
+            newVisible,
+            newPaper,
+            newOrientation,
+            newCount,
+            paperOptions,
             canvasRef,
             // 裁剪 / 遮盖
             mode,
@@ -1282,6 +1356,17 @@ export default defineComponent({
 .ws-meta {
     color: #555;
     font-size: 13px;
+}
+
+.ws-title {
+    color: #333;
+    font-size: 13px;
+    /* 给个下限，否则会被 flex 压到只剩两个字符加省略号 */
+    min-width: 80px;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .ws-alert {
