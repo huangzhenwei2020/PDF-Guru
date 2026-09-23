@@ -1,6 +1,6 @@
 <template>
     <div>
-        <a-form ref="formRef" style="border: 1px solid #dddddd; padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
+        <a-form ref="formRef" style="border: 1px solid var(--ws-border-strong); padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
             :model="store" :label-col="{ span: 3 }" :wrapper-col="{ offset: 1, span: 18 }" :rules="rules"
             @finish="onFinish" @finishFailed="onFinishFailed">
             <a-form-item name="input" label="输入" :validateStatus="validateStatus.input" :help="validateHelp.input">

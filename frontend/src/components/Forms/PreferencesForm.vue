@@ -1,6 +1,18 @@
 <template>
     <div>
-        <a-form ref="formRef" style="border: 1px solid #dddddd; padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
+        <!-- 外观：全局设置，放在最前面 -->
+        <a-form style="border: 1px solid var(--ws-border-strong); padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
+            :label-col="{ span: 3 }" :wrapper-col="{ offset: 1, span: 18 }">
+            <a-form-item label="外观">
+                <a-radio-group v-model:value="themeMode" button-style="solid" @change="onThemeChange">
+                    <a-radio-button value="light">亮色</a-radio-button>
+                    <a-radio-button value="dark">深色</a-radio-button>
+                </a-radio-group>
+                <span class="theme-hint">切换立即生效，选择会被记住</span>
+            </a-form-item>
+        </a-form>
+
+        <a-form ref="formRef" style="border: 1px solid var(--ws-border-strong); padding: 10px 0;border-radius: 10px;margin-right: 5vw;margin-top: 12px;"
             :model="formState" :label-col="{ span: 3 }" :wrapper-col="{ offset: 1, span: 18 }" :rules="rules"
             @finish="onFinish" @finishFailed="onFinishFailed">
             <a-form-item name="python_path" label="python路径" :validateStatus="validateStatus.python_path"
@@ -142,6 +154,7 @@ import type { FormInstance } from 'ant-design-vue';
 import type { Rule } from 'ant-design-vue/es/form';
 import { EllipsisOutlined, GithubOutlined, UserOutlined } from '@ant-design/icons-vue';
 import type { PreferencesState } from "../data";
+import { getTheme, setTheme, type ThemeMode } from "../../theme";
 export default defineComponent({
     components: {
         EllipsisOutlined,
@@ -150,6 +163,9 @@ export default defineComponent({
     },
     setup() {
         const formRef = ref<FormInstance>();
+        // 外观设置：切换即生效并被记住（见 src/theme.ts）
+        const themeMode = ref<ThemeMode>(getTheme());
+        const onThemeChange = () => setTheme(themeMode.value);
         const formState = reactive<PreferencesState>({
             pdf_path: "",
             python_path: "",
@@ -330,6 +346,8 @@ export default defineComponent({
         }
         return {
             formState,
+            themeMode,
+            onThemeChange,
             rules,
             formRef,
             validateStatus,
@@ -348,3 +366,11 @@ export default defineComponent({
     }
 })
 </script>
+
+<style scoped>
+.theme-hint {
+    margin-left: 12px;
+    color: var(--ws-text-dim);
+    font-size: 12px;
+}
+</style>

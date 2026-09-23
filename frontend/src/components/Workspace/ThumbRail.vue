@@ -370,8 +370,8 @@ export default defineComponent({
     min-width: 140px;
     overflow-y: auto;
     overflow-x: hidden;
-    background: #fafafa;
-    border-right: 1px solid #e8e8e8;
+    background: var(--ws-bg-subtle);
+    border-right: 1px solid var(--ws-border);
     padding: 10px;
 }
 
@@ -385,21 +385,21 @@ export default defineComponent({
     padding: 4px;
     border: 2px solid transparent;
     border-radius: 4px;
-    background: #fff;
+    background: var(--ws-card-bg);
     cursor: grab;
     text-align: center;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--ws-shadow-sm);
     user-select: none;
     touch-action: none;
 }
 
 .row.sel {
-    border-color: #91caff;
-    background: #e6f4ff;
+    border-color: var(--ws-selected-border);
+    background: var(--ws-selected-bg);
 }
 
 .row.cur {
-    border-color: #1677ff;
+    border-color: var(--ws-accent);
     box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.15);
 }
 
@@ -415,7 +415,7 @@ export default defineComponent({
     left: 0;
     right: 0;
     height: 3px;
-    background: #1677ff;
+    background: var(--ws-accent);
     border-radius: 2px;
 }
 
@@ -447,15 +447,15 @@ export default defineComponent({
     justify-content: center;
     width: 150px;
     height: 212px;
-    color: #bbb;
+    color: var(--ws-text-faint);
     font-size: 12px;
-    border: 1px dashed #ddd;
+    border: 1px dashed var(--ws-border-strong);
 }
 
 .loadingface {
     width: 100%;
     height: 100%;
-    background: repeating-linear-gradient(45deg, #f5f5f5, #f5f5f5 6px, #ececec 6px, #ececec 12px);
+    background: repeating-linear-gradient(45deg, var(--ws-skeleton-a), var(--ws-skeleton-a) 6px, var(--ws-skeleton-b) 6px, var(--ws-skeleton-b) 12px);
 }
 
 .no {
@@ -463,8 +463,8 @@ export default defineComponent({
     right: 6px;
     bottom: 4px;
     font-size: 11px;
-    color: #555;
-    background: rgba(255, 255, 255, 0.9);
+    color: var(--ws-text-sub);
+    background: var(--ws-badge-bg);
     border-radius: 3px;
     padding: 0 4px;
 }
@@ -475,7 +475,7 @@ export default defineComponent({
     bottom: 4px;
     font-size: 10px;
     font-weight: 600;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--ws-badge-bg);
     border-radius: 3px;
     padding: 0 3px;
 }
@@ -485,8 +485,8 @@ export default defineComponent({
     right: 6px;
     top: 4px;
     font-size: 10px;
-    color: #d46b08;
-    background: #fff7e6;
+    color: var(--ws-warn-text);
+    background: var(--ws-warn-bg);
     border-radius: 3px;
     padding: 0 3px;
 }
@@ -499,7 +499,7 @@ export default defineComponent({
     display: flex;
     gap: 3px;
     padding: 2px 3px;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--ws-badge-bg);
     border-radius: 3px;
 }
 
@@ -511,7 +511,7 @@ export default defineComponent({
 }
 
 .dot-crop {
-    background: #1677ff;
+    background: var(--ws-accent);
 }
 
 .dot-mask {
@@ -527,7 +527,7 @@ export default defineComponent({
     z-index: 9999;
     pointer-events: none;
     transform: translate(14px, 14px);
-    background: #1677ff;
+    background: var(--ws-accent);
     color: #fff;
     font-size: 12px;
     padding: 2px 8px;
@@ -536,7 +536,7 @@ export default defineComponent({
 }
 
 .hint {
-    color: #999;
+    color: var(--ws-text-dim);
     font-size: 13px;
     text-align: center;
     padding: 20px 8px;

@@ -778,16 +778,16 @@ export default defineComponent({
 
 <style scoped>
 .mycard {
-    border: 1px solid #ddd;
-    background: #fafafa;
+    border: 1px solid var(--ws-border-strong);
+    background: var(--ws-bg-subtle);
     width: 100px;
     text-align: center;
     margin-top: 10px;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--ws-shadow-sm);
     border-radius: 10px;
 }
 
 .mycard:hover {
-    border: 1px solid #e8e8e8;
-    background-color: #f4f4f4;
+    border: 1px solid var(--ws-border);
+    background-color: var(--ws-bg-hover);
 }</style>

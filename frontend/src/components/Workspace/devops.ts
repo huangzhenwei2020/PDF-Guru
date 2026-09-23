@@ -23,6 +23,8 @@
 
 import { displayRectToPageRect, parseRange, type NormRect, type WSItem } from "./model";
 import { WorkspacePageImages } from "../../../wailsjs/go/main/App";
+import { setTheme } from "../../theme";
+import { useMenuState } from "../../store/menu";
 
 /** 把 "1,3-5" 这样的位置表达式翻译成当前清单里的 id。 */
 function positionsToIds(seq: WSItem[], spec: string): string[] {
@@ -157,6 +159,20 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 } catch (e: any) {
                     log.push(`extractimg 失败: ${e?.message ?? e}`);
                 }
+                break;
+            }
+            // menu:index|settings|... —— 切换左侧菜单页。
+            // 比用合成点击去猜坐标可靠得多（猜过一次，点到了隔壁菜单项）。
+            case "menu": {
+                useMenuState().selectedKeys = [arg || "index"];
+                log.push(`menu:${arg}`);
+                break;
+            }
+            // theme:dark|light —— 切换主题（会写进 localStorage，供跨进程验证）
+            case "theme": {
+                const mode = arg === "dark" ? "dark" : "light";
+                setTheme(mode);
+                log.push(`theme:${mode}`);
                 break;
             }
             // open:<路径> —— 打开另一个文档。用于验证"重置工作区"是否彻底

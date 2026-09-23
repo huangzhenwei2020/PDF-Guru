@@ -1,0 +1,92 @@
+/**
+ * 主题变量。
+ *
+ * 为什么需要这一层：ant-design-vue 3 只提供两套**整份**样式（antd.css / antd.dark.css），
+ * 组件库自身能靠运行时替换那两份文件切换；但界面里我们手写的颜色（面板底色、边框、
+ * 次级文字…）不在组件库管辖范围内，必须自己变成变量，否则切到深色后这些地方会保持亮色。
+ *
+ * 命名按用途而不是按颜色，这样改深色时不需要回头理解每处为什么用那个色。
+ */
+
+:root {
+    /* 底色层次：面板 -> 次级（轨道/输入框）-> 画布 */
+    --ws-bg: #ffffff;
+    --ws-bg-subtle: #fafafa;
+    --ws-bg-canvas: #f0f2f5;
+    --ws-card-bg: #ffffff;
+    --ws-bg-hover: #f4f4f4;
+    /* 浮层（工具条）需要一点透明，压在画布上时不那么硬 */
+    --ws-panel: rgba(255, 255, 255, 0.92);
+
+    /* 边框 */
+    --ws-border: #e8e8e8;
+    --ws-border-strong: #dddddd;
+    --ws-border-subtle: #f5f5f5;
+
+    /* 文字层次 */
+    --ws-text: #333333;
+    --ws-text-sub: #555555;
+    --ws-text-dim: #999999;
+    --ws-text-faint: #aaaaaa;
+
+    /* 阴影 */
+    --ws-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --ws-shadow-lg: 0 3px 12px rgba(0, 0, 0, 0.18);
+
+    /* 选中态 */
+    --ws-selected-bg: #e6f4ff;
+    --ws-selected-border: #91caff;
+
+    /* 强调色与状态色 */
+    --ws-accent: #1677ff;
+    --ws-warn-text: #d46b08;
+    --ws-warn-bg: #fff7e6;
+
+    /* 覆盖在页面缩略图上的小角标：底色总是"压在白纸上的浅底" */
+    --ws-badge-bg: rgba(255, 255, 255, 0.9);
+
+    /* 缩略图占位的斜纹 */
+    --ws-skeleton-a: #f5f5f5;
+    --ws-skeleton-b: #ececec;
+
+    /* 整窗背景（窗口边缘露出的部分） */
+    --ws-shell-bg: rgba(27, 38, 54, 1);
+    --ws-shell-text: #ffffff;
+}
+
+[data-theme="dark"] {
+    --ws-bg: #1f1f1f;
+    --ws-bg-subtle: #262626;
+    --ws-bg-canvas: #141414;
+    --ws-card-bg: #232323;
+    --ws-bg-hover: #303030;
+    --ws-panel: rgba(38, 38, 38, 0.92);
+
+    --ws-border: #3a3a3a;
+    --ws-border-strong: #434343;
+    --ws-border-subtle: #303030;
+
+    --ws-text: #e6e6e6;
+    --ws-text-sub: #bfbfbf;
+    --ws-text-dim: #8c8c8c;
+    --ws-text-faint: #6f6f6f;
+
+    --ws-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+    --ws-shadow-lg: 0 3px 12px rgba(0, 0, 0, 0.6);
+
+    --ws-selected-bg: #112a45;
+    --ws-selected-border: #1677ff;
+
+    --ws-accent: #1677ff;
+    --ws-warn-text: #d89614;
+    --ws-warn-bg: #2b1d0a;
+
+    /* 角标压在**白色页面**上，因此深色下仍用浅底、深字 */
+    --ws-badge-bg: rgba(255, 255, 255, 0.9);
+
+    --ws-skeleton-a: #2a2a2a;
+    --ws-skeleton-b: #333333;
+
+    --ws-shell-bg: #141414;
+    --ws-shell-text: #e6e6e6;
+}

@@ -1,6 +1,6 @@
 <template>
     <div>
-        <a-form ref="formRef" style="border: 1px solid #dddddd; padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
+        <a-form ref="formRef" style="border: 1px solid var(--ws-border-strong); padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
             :model="store" :label-col="{ span: 3 }" :wrapper-col="{ offset: 1, span: 18 }" :rules="rules" @finish="onFinish"
             @finishFailed="onFinishFailed">
             <a-form-item name="encrypt_op" label="操作" style="margin-bottom: 1.8vh;">
@@ -10,7 +10,7 @@
                 </a-radio-group>
             </a-form-item>
             <div v-if="store.op === 'add'">
-                <div style="border: 1px solid #dddddd;border-radius: 10px;margin: 0 1vw;">
+                <div style="border: 1px solid var(--ws-border-strong);border-radius: 10px;margin: 0 1vw;">
                     <a-form-item name="is_set_upw" label="设置页眉" :disabled="!store.is_set_header">
                         <a-checkbox v-model:checked="store.is_set_header"></a-checkbox>
                     </a-form-item>
@@ -27,7 +27,7 @@
                             :disabled="!store.is_set_header" />
                     </a-form-item>
                 </div>
-                <div style="border: 1px solid #dddddd;border-radius: 10px;margin: 1vw 1vw;">
+                <div style="border: 1px solid var(--ws-border-strong);border-radius: 10px;margin: 1vw 1vw;">
                     <a-form-item name="is_set_upw" label="设置页脚" :disabled="!store.is_set_footer">
                         <a-checkbox v-model:checked="store.is_set_footer"></a-checkbox>
                     </a-form-item>

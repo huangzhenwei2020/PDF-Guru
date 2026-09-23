@@ -232,8 +232,10 @@
             来源={{ store.sourceList.length }} · 清单={{ store.seq.length }} · 已选={{ store.selected.length }} ·
             撤销栈={{ store.past.length }} · 重做栈={{ store.future.length }} ·
             当前={{ store.currentPos + 1 }}/{{ store.seq.length }} · 预览 p{{ previewPage }} ·
-            title={{ JSON.stringify(store.title) }} · urlMode={{ urlMode }}
+            缩略图={{ Object.keys(store.thumbs).length }} · 载入中={{ store.previewLoading }} ·
+            theme={{ themeAttr }} · urlMode={{ urlMode }}
             {{ autoLog }}
+            <span v-if="jsErr" class="ws-err"> · JS错误: {{ jsErr }}</span>
         </div>
 
         <!-- 插入空白页 -->
@@ -526,6 +528,16 @@ export default defineComponent({
         const store = useWorkspaceState();
         const origin = window.location.origin;
         const autoLog = ref('');
+        /** 诊断用：把未捕获的 JS 异常也显示出来，否则生产构建里看不到控制台 */
+        const jsErr = ref('');
+
+        window.addEventListener('error', (ev: ErrorEvent) => {
+            jsErr.value = String(ev.message || ev.error || '');
+        });
+        window.addEventListener('unhandledrejection', (ev: PromiseRejectionEvent) => {
+            const r: any = ev.reason;
+            jsErr.value = String(r?.message ?? r ?? '');
+        });
 
         // Wails 生产环境是 http://wails.localhost，相对路径可直接用；
         // 这里仍保留 origin 形式的降级，作为其它平台/协议的保险。
@@ -686,6 +698,8 @@ export default defineComponent({
         // 因此这类回调统一在 setup 里定义
         const onViewModeChange = (v: any) => store.setViewMode(v);
         const onThumbWidthChange = (v: any) => store.setThumbWidth(v);
+        /** 诊断用：模板里不能直接引用 document，这里包一层 */
+        const themeAttr = computed(() => document.documentElement.dataset.theme || 'light');
 
         const shortcutVisible = ref(false);
         const shortcuts: [string, string][] = [
@@ -1340,6 +1354,8 @@ export default defineComponent({
             pickFile,
             onInsertMenu,
             autoLog,
+            jsErr,
+            themeAttr,
             // 插入相关
             blankVisible,
             blankPaper,
@@ -1393,12 +1409,12 @@ export default defineComponent({
 }
 
 .ws-meta {
-    color: #555;
+    color: var(--ws-text-sub);
     font-size: 13px;
 }
 
 .ws-title {
-    color: #333;
+    color: var(--ws-text);
     font-size: 13px;
     /* 给个下限，否则会被 flex 压到只剩两个字符加省略号 */
     min-width: 80px;
@@ -1416,7 +1432,7 @@ export default defineComponent({
     flex: 1;
     display: flex;
     min-height: 0;
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--ws-border);
     border-radius: 8px;
     overflow: hidden;
 }
@@ -1429,7 +1445,7 @@ export default defineComponent({
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    background: #f0f2f5;
+    background: var(--ws-bg-canvas);
     padding: 12px;
 }
 
@@ -1443,14 +1459,14 @@ export default defineComponent({
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid #e8e8e8;
+    background: var(--ws-panel);
+    border: 1px solid var(--ws-border);
     border-radius: 6px;
 }
 
 .ws-modehint {
     font-size: 12px;
-    color: #888;
+    color: var(--ws-text-dim);
     margin-left: 4px;
 }
 
@@ -1472,19 +1488,19 @@ export default defineComponent({
     display: flex;
     gap: 12px;
     padding: 5px 0;
-    border-bottom: 1px solid #f5f5f5;
+    border-bottom: 1px solid var(--ws-border-subtle);
 }
 
 .sc-key {
     flex: 0 0 200px;
     font-family: Consolas, Monaco, monospace;
     font-size: 12px;
-    color: #1677ff;
+    color: var(--ws-accent);
 }
 
 .sc-desc {
     font-size: 13px;
-    color: #555;
+    color: var(--ws-text-sub);
 }
 
 /* 右键菜单 */
@@ -1498,7 +1514,7 @@ export default defineComponent({
     position: fixed;
     min-width: 176px;
     border-radius: 6px;
-    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
+    box-shadow: var(--ws-shadow-lg);
 }
 
 .ws-textbox {
@@ -1509,10 +1525,10 @@ export default defineComponent({
     font-family: Consolas, Monaco, monospace;
     font-size: 12px;
     line-height: 1.6;
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--ws-border);
     border-radius: 4px;
     resize: vertical;
-    background: #fafafa;
+    background: var(--ws-bg-subtle);
 }
 
 .pv-draw {
@@ -1561,17 +1577,17 @@ export default defineComponent({
     flex-direction: column;
     align-items: center;
     gap: 6px;
-    color: #aaa;
+    color: var(--ws-text-faint);
     font-size: 14px;
 }
 
 .ws-blank small {
     font-size: 11px;
-    color: #bbb;
+    color: var(--ws-text-faint);
 }
 
 .ws-hint {
-    color: #999;
+    color: var(--ws-text-dim);
     font-size: 13px;
     text-align: center;
     padding: 20px 8px;
@@ -1579,12 +1595,12 @@ export default defineComponent({
 }
 
 .ws-hint-sub {
-    color: #bbb;
+    color: var(--ws-text-faint);
     font-size: 12px;
 }
 
 .ws-note {
-    color: #999;
+    color: var(--ws-text-dim);
     font-size: 12px;
     line-height: 1.9;
 }
@@ -1607,7 +1623,7 @@ export default defineComponent({
 .decor-body {
     margin: 8px 0 0 24px;
     padding-left: 12px;
-    border-left: 3px solid #f0f0f0;
+    border-left: 3px solid var(--ws-border-subtle);
 }
 
 .decor-row {
@@ -1619,7 +1635,7 @@ export default defineComponent({
 .ws-diag {
     margin-top: 6px;
     font-size: 11px;
-    color: #aaa;
+    color: var(--ws-text-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
