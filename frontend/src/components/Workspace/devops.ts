@@ -216,6 +216,53 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 log.push(`menu:${arg}`);
                 break;
             }
+            // wheel:<deltaY>[,<ctrl=1|0>[,<次数>]] —— 合成滚轮事件，验证 Ctrl+滚轮缩放
+            case "wheel": {
+                const parts = arg.split(",");
+                const dy = Number(parts[0]) || -100;
+                const ctrl = parts[1] !== "0";
+                const times = Math.max(1, parseInt(parts[2] ?? "1", 10) || 1);
+                const before = `${store.zoomMode}/${store.zoom}`;
+                const el = document.querySelector(".ws-canvas") as HTMLElement | null;
+                if (!el) {
+                    log.push("wheel: 找不到画布");
+                    break;
+                }
+                const r = el.getBoundingClientRect();
+                for (let i = 0; i < times; i++) {
+                    el.dispatchEvent(
+                        new WheelEvent("wheel", {
+                            deltaY: dy,
+                            ctrlKey: ctrl,
+                            bubbles: true,
+                            cancelable: true,
+                            clientX: r.left + r.width / 2,
+                            clientY: r.top + r.height / 2,
+                        })
+                    );
+                }
+                log.push(`wheel:${dy} x${times} 之前=${before} 之后=${store.zoomMode}/${Math.round(store.zoom * 100) / 100}`);
+                break;
+            }
+            // zoom:<倍数>|fit —— 驱动缩放
+            case "zoom": {
+                if (arg === "fit") {
+                    store.zoomFit();
+                } else {
+                    store.setZoom(parseFloat(arg) || 1);
+                }
+                log.push(`zoom:${arg} -> ${store.zoomMode}/${store.zoom} 渲染宽度=${store.previewWidth}`);
+                // 等两帧让布局落定，再量一下页面实际显示宽度：
+                // 用来确认跨过清晰度档位时尺寸不会跳变
+                await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                const box = document.querySelector(".pv-fit") as HTMLElement | null;
+                const rect = box?.getBoundingClientRect();
+                log.push(
+                    `页面显示宽=${rect ? Math.round(rect.width) : "-"} 渲染宽度=${store.previewWidth}`
+                );
+                log.push(`zoomPct=${ui?.zoomPct?.() ?? "?"}%`);
+                break;
+            }
             // theme:dark|light —— 切换主题（会写进 localStorage，供跨进程验证）
             case "theme": {
                 const mode = arg === "dark" ? "dark" : "light";

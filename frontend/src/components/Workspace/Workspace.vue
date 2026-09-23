@@ -141,8 +141,8 @@
             <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" :width="store.thumbWidth"
                 @select="onSelect" @move="onMove" @need="onNeedThumbs" @ctx="onCtx" />
 
-            <div ref="canvasRef" class="ws-canvas">
-                <!-- 页面内容工具：裁剪/遮盖靠在这块区域上拖框完成 -->
+            <!-- 画布外层：工具条固定在画布上方，画布自身可滚动（放大后要能看别处） -->
+            <div class="ws-canvas-wrap">
                 <div class="ws-modes">
                     <a-radio-group v-model:value="mode" size="small" button-style="solid">
                         <a-radio-button value="view">浏览</a-radio-button>
@@ -154,7 +154,22 @@
                         <a-radio-button value="single">单页</a-radio-button>
                         <a-radio-button value="dual">双页</a-radio-button>
                     </a-radio-group>
-                    <a-select :value="store.thumbWidth" size="small" style="width: 96px" :options="thumbSizeOptions"
+
+                    <!-- 缩放：Ctrl+滚轮 或 Ctrl + / Ctrl - -->
+                    <a-button-group size="small">
+                        <a-button @click="zoomBy(1 / 1.25)" title="缩小 (Ctrl -)">−</a-button>
+                        <a-button class="zoom-pct" @click="zoomFit" title="点一下回到适应窗口">
+                            {{ zoomPct }}%
+                        </a-button>
+                        <a-button @click="zoomBy(1.25)" title="放大 (Ctrl +)">＋</a-button>
+                    </a-button-group>
+                    <a-button size="small" :type="store.zoomMode === 'fit' ? 'primary' : 'default'"
+                        @click="zoomFit">适应</a-button>
+                    <a-button size="small" @click="zoomActual" title="1 个图像像素对 1 个屏幕像素">
+                        1:1
+                    </a-button>
+
+                    <a-select :value="store.thumbWidth" size="small" style="width: 92px" :options="thumbSizeOptions"
                         @update:value="onThumbWidthChange" />
                     <a-button size="small" @click="shortcutVisible = true">快捷键</a-button>
                     <template v-if="mode === 'mask'">
@@ -174,68 +189,73 @@
                     </span>
                 </div>
 
-                <div v-if="store.previewLoading && !views.length" class="ws-hint">渲染中…</div>
+                <!-- 可滚动画布：放大后靠滚动查看其余部分。
+                     工具条在上面、不参与滚动，所以放大后缩放按钮仍然够得着。 -->
+                <div ref="canvasRef" class="ws-canvas" @wheel="onCanvasWheel">
+                    <div v-if="store.previewLoading && !views.length" class="ws-hint">渲染中…</div>
 
-                <!-- 页面预览。单页视图一列，双页视图并排两列；
-                     两列共用同一个缩放比例，看起来才整齐。
-                     旋转与缩放分层处理，每层只做一件事，避免多个 transform 揉在一起。 -->
-                <div v-else-if="views.length" class="pv-row" :class="{ 'pv-draw': mode !== 'view' }">
-                    <div v-for="(v, vi) in views" :key="v.item.id" :ref="(el) => setBoxRef(el, vi)" class="pv-fit"
-                        :style="{ width: v.fitW + 'px', height: v.fitH + 'px' }"
-                        @pointerdown="vi === 0 ? onCanvasDown($event) : undefined">
+                    <!-- 页面预览。单页视图一列，双页视图并排两列；
+                         两列共用同一个缩放比例，看起来才整齐。
+                         旋转与缩放分层处理，每层只做一件事，避免多个 transform 揉在一起。 -->
+                    <div v-else-if="views.length" class="pv-row" :class="{ 'pv-draw': mode !== 'view' }">
+                        <div v-for="(v, vi) in views" :key="v.item.id" :ref="(el) => setBoxRef(el, vi)" class="pv-fit"
+                            :style="{ width: v.fitW + 'px', height: v.fitH + 'px' }"
+                            @pointerdown="vi === 0 ? onCanvasDown($event) : undefined">
 
-                        <div v-if="v.blank" class="ws-blank">
-                            <file-outlined />
-                            <div>空白页</div>
-                            <small>{{ v.item.paper }} · {{ v.item.orientation === 'landscape' ? '横向' : '纵向' }}</small>
-                        </div>
-
-                        <div v-else-if="v.pending" class="ws-hint">渲染中…</div>
-
-                        <template v-else>
-                            <div class="pv-box" :style="{
-                                width: v.dispW + 'px',
-                                height: v.dispH + 'px',
-                                transform: `scale(${v.scale})`,
-                            }">
-                                <img :src="v.url" :style="{
-                                    width: v.imgW + 'px',
-                                    height: v.imgH + 'px',
-                                    transform: `translate(-50%, -50%) rotate(${v.rot}deg)`,
-                                }" alt="" @error="onImgError" />
+                            <div v-if="v.blank" class="ws-blank">
+                                <file-outlined />
+                                <div>空白页</div>
+                                <small>{{ v.item.paper }} · {{ v.item.orientation === 'landscape' ? '横向' : '纵向' }}</small>
                             </div>
 
-                            <!-- 操作回显与框选只画在当前页（第一格）上 -->
-                            <template v-if="vi === 0">
-                                <!-- 坐标已从页面空间换算到显示空间，页面旋转后框仍落在正确位置 -->
-                                <div v-if="overlay.crop" class="ov-crop" :style="pctStyle(overlay.crop)"></div>
-                                <div v-for="(m, i) in overlay.masks" :key="i" class="ov-mask"
-                                    :style="Object.assign(pctStyle(m.rect), { background: m.color, opacity: m.opacity })"></div>
-                                <div v-if="dragRect" class="ov-drag" :style="pctStyle(dragRect)"></div>
+                            <div v-else-if="v.pending" class="ws-hint">渲染中…</div>
+
+                            <template v-else>
+                                <div class="pv-box" :style="{
+                                    width: v.dispW + 'px',
+                                    height: v.dispH + 'px',
+                                    transform: `scale(${v.scale})`,
+                                }">
+                                    <img :src="v.url" :style="{
+                                        width: v.imgW + 'px',
+                                        height: v.imgH + 'px',
+                                        transform: `translate(-50%, -50%) rotate(${v.rot}deg)`,
+                                    }" alt="" @error="onImgError" />
+                                </div>
+
+                                <!-- 操作回显与框选只画在当前页（第一格）上 -->
+                                <template v-if="vi === 0">
+                                    <!-- 坐标已从页面空间换算到显示空间，页面旋转后框仍落在正确位置 -->
+                                    <div v-if="overlay.crop" class="ov-crop" :style="pctStyle(overlay.crop)"></div>
+                                    <div v-for="(m, i) in overlay.masks" :key="i" class="ov-mask"
+                                        :style="Object.assign(pctStyle(m.rect), { background: m.color, opacity: m.opacity })"></div>
+                                    <div v-if="dragRect" class="ov-drag" :style="pctStyle(dragRect)"></div>
+                                </template>
                             </template>
+                        </div>
+                    </div>
+
+                    <div v-else class="ws-hint">
+                        <template v-if="store.seq.length">选择左侧任意一页查看大图</template>
+                        <template v-else>
+                            把 PDF 拖进窗口即可打开<br />
+                            <small class="ws-hint-sub">也可以点左上角「打开 PDF」；拖入多个会合并成一份</small>
                         </template>
                     </div>
-                </div>
-
-                <div v-else class="ws-hint">
-                    <template v-if="store.seq.length">选择左侧任意一页查看大图</template>
-                    <template v-else>
-                        把 PDF 拖进窗口即可打开<br />
-                        <small class="ws-hint-sub">也可以点左上角「打开 PDF」；拖入多个会合并成一份</small>
-                    </template>
                 </div>
             </div>
         </div>
 
         <!-- 诊断条：供图是本方案的地基，把关键状态摊在界面上，出问题截图即可定位 -->
         <div class="ws-diag">
+            <!-- autoops 放在最前面：它在末尾时会被窗口右边裁掉，验证时看不到输出 -->
+            {{ autoLog }}
+            <span v-if="jsErr" class="ws-err">JS错误: {{ jsErr }} · </span>
             来源={{ store.sourceList.length }} · 清单={{ store.seq.length }} · 已选={{ store.selected.length }} ·
             撤销栈={{ store.past.length }} · 重做栈={{ store.future.length }} ·
             当前={{ store.currentPos + 1 }}/{{ store.seq.length }} · 预览 p{{ previewPage }} ·
             缩略图={{ Object.keys(store.thumbs).length }} · 载入中={{ store.previewLoading }} ·
-            theme={{ themeAttr }} · urlMode={{ urlMode }}
-            {{ autoLog }}
-            <span v-if="jsErr" class="ws-err"> · JS错误: {{ jsErr }}</span>
+            theme={{ themeAttr }} · urlMode={{ urlMode }} · 画布={{ canvasSize }}
         </div>
 
         <!-- 插入空白页 -->
@@ -527,12 +547,24 @@ export default defineComponent({
     setup() {
         const store = useWorkspaceState();
         const origin = window.location.origin;
+
+        /**
+         * 缩放参考宽度：显示尺寸以它为准，与"当前用哪一档分辨率渲染"解耦。
+         * 取 900 是因为那正是默认档的渲染宽度，于是 100% 的含义
+         * 就是"默认档渲染图 1 像素对 1 CSS 像素"。
+         */
+        const ZOOM_REF_WIDTH = 900;
         const autoLog = ref('');
         /** 诊断用：把未捕获的 JS 异常也显示出来，否则生产构建里看不到控制台 */
         const jsErr = ref('');
 
         window.addEventListener('error', (ev: ErrorEvent) => {
-            jsErr.value = String(ev.message || ev.error || '');
+            const msg = String(ev.message || ev.error || '');
+            // "ResizeObserver loop completed with undelivered notifications" 是浏览器层面的
+            // 已知良性告警（回调里改了布局），画布出现滚动条时会触发；不当成应用错误展示，
+            // 否则会把真正的问题淹掉。其余异常照常显示。
+            if (msg.includes('ResizeObserver loop')) return;
+            jsErr.value = msg;
         });
         window.addEventListener('unhandledrejection', (ev: PromiseRejectionEvent) => {
             const r: any = ev.reason;
@@ -640,14 +672,19 @@ export default defineComponent({
                 const rot90 = rot === 90 || rot === 270;
 
                 if (item.kind === 'blank') {
-                    // 空白页没有可渲染的内容，按 A4 竖版的名义尺寸占位
-                    raw.push({ item, blank: true, dispW: 595, dispH: 842 });
+                    // 空白页没有可渲染的内容，按 A4 的名义尺寸占位；
+                    // 宽度用参考宽度，这样它与真实页面的"同一倍数"看起来一样大
+                    raw.push({ item, blank: true, imgW: ZOOM_REF_WIDTH, dispW: ZOOM_REF_WIDTH, dispH: Math.round(ZOOM_REF_WIDTH * 1.414) });
                     continue;
                 }
 
                 const p = k === 0 ? store.preview : store.previewB;
                 if (!p) {
-                    raw.push({ item, blank: false, pending: true, dispW: rot90 ? 842 : 595, dispH: rot90 ? 595 : 842 });
+                    raw.push({
+                        item, blank: false, pending: true, imgW: ZOOM_REF_WIDTH,
+                        dispW: rot90 ? Math.round(ZOOM_REF_WIDTH * 1.414) : ZOOM_REF_WIDTH,
+                        dispH: rot90 ? ZOOM_REF_WIDTH : Math.round(ZOOM_REF_WIDTH * 1.414),
+                    });
                     continue;
                 }
                 raw.push({
@@ -670,21 +707,79 @@ export default defineComponent({
             const availW = Math.max(120, canvasW.value - 30 - gap);
             const availH = Math.max(120, canvasH.value - 30);
             const perPageW = availW / n;
-            let scale = 1;
+            let fitScale = 1;
             for (const v of raw) {
-                scale = Math.min(scale, perPageW / v.dispW, availH / v.dispH);
+                fitScale = Math.min(fitScale, perPageW / v.dispW, availH / v.dispH);
             }
-            return raw.map((v) => ({
-                ...v,
-                scale,
-                fitW: Math.round(v.dispW * scale),
-                fitH: Math.round(v.dispH * scale),
-            }));
+
+            return raw.map((v) => {
+                // 自定义倍数时把显示尺寸**锚定到参考宽度**，而不是乘图像自身的像素宽度：
+                // 放大时渲染分辨率会换档（900 -> 2000），若直接乘倍数，
+                // 跨过阈值那一刻页面尺寸会突然跳一倍。适应窗口没这个问题——
+                // 图像变宽时 fitScale 同步变小，两者正好抵消。
+                const scale =
+                    store.zoomMode === 'fit' ? fitScale : (store.zoom * ZOOM_REF_WIDTH) / v.imgW;
+                return {
+                    ...v,
+                    scale,
+                    fitW: Math.round(v.dispW * scale),
+                    fitH: Math.round(v.dispH * scale),
+                };
+            });
         });
 
         /** 只有第一格（当前页）参与裁剪/遮盖的框选 */
         const setBoxRef = (el: any, vi: number) => {
             if (vi === 0) canvasBoxRef.value = (el as HTMLElement) ?? null;
+        };
+
+        /** 诊断用：画布以 CSS 像素计的可用尺寸（和截图里的物理像素对比可看出 DPI 缩放） */
+        const canvasSize = computed(() => `${Math.round(canvasW.value)}x${Math.round(canvasH.value)}`);
+
+        // --- 缩放 ---------------------------------------------------------
+
+        /**
+         * 以**参考宽度**为基准的显示倍数：100% = 默认档渲染图 1 像素对 1 CSS 像素。
+         *
+         * 不能用"图像像素比"（scale 本身）来当读数：渲染档位会在放大时从 900 换到 2000，
+         * 于是同一块屏幕大小会读出 119% 又突然变成 54%，控件与读数就对不上了。
+         */
+        const refScale = computed(() => {
+            const v = views.value[0];
+            if (!v) return 1;
+            return (v.scale * v.imgW) / ZOOM_REF_WIDTH;
+        });
+        const zoomPct = computed(() => Math.round(refScale.value * 100));
+
+        const zoomBy = (factor: number) => store.setZoom(refScale.value * factor);
+        const zoomActual = () => store.setZoom(1);
+        const zoomFit = () => store.zoomFit();
+
+        /**
+         * Ctrl + 滚轮缩放。
+         *
+         * 缩放后把滚动位置按比例调回去，让光标底下的那个点大致留在原处——
+         * 否则放大后视野会跳到别处，还得重新找刚才在看的位置。
+         */
+        const onCanvasWheel = (e: WheelEvent) => {
+            if (!e.ctrlKey) return; // 普通滚轮留给滚动
+            e.preventDefault();
+            const el = canvasRef.value;
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const next = Math.max(0.15, Math.min(6, refScale.value * factor));
+            if (!el) {
+                store.setZoom(next);
+                return;
+            }
+            const r = el.getBoundingClientRect();
+            const fx = el.scrollWidth ? (e.clientX - r.left + el.scrollLeft) / el.scrollWidth : 0.5;
+            const fy = el.scrollHeight ? (e.clientY - r.top + el.scrollTop) / el.scrollHeight : 0.5;
+            store.setZoom(next);
+            // 等 DOM 按新尺寸布局完再调整滚动位置
+            requestAnimationFrame(() => {
+                el.scrollLeft = fx * el.scrollWidth - (e.clientX - r.left);
+                el.scrollTop = fy * el.scrollHeight - (e.clientY - r.top);
+            });
         };
 
         // --- 视图偏好与快捷键面板 -----------------------------------------
@@ -711,6 +806,8 @@ export default defineComponent({
             ['[ / ]', '逆时针 / 顺时针旋转 90°'],
             ['方向键 / PageUp / PageDown', '上一页 / 下一页'],
             ['Home / End', '第一页 / 最后一页'],
+            ['Ctrl + 滚轮 / Ctrl + / Ctrl -', '缩放'],
+            ['Ctrl + 0', '缩放回「适应窗口」'],
             ['Ctrl + Z / Ctrl + Shift + Z', '撤销 / 重做'],
             ['Ctrl + S', '保存（覆盖主来源文件，先自动备份 .bak）'],
             ['Ctrl + Shift + S', '导出为新的 PDF'],
@@ -1222,6 +1319,22 @@ export default defineComponent({
                 else doSave();
                 return;
             }
+            // 缩放：Ctrl + / Ctrl - / Ctrl 0
+            if (ctrl && (e.key === '=' || e.key === '+')) {
+                e.preventDefault();
+                zoomBy(1.25);
+                return;
+            }
+            if (ctrl && (e.key === '-' || e.key === '_')) {
+                e.preventDefault();
+                zoomBy(1 / 1.25);
+                return;
+            }
+            if (ctrl && e.key === '0') {
+                e.preventDefault();
+                zoomFit();
+                return;
+            }
             // 翻页：方向键 / PageUp / PageDown / Home / End
             // 任何文档阅读器都有，缺了会很别扭
             if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') {
@@ -1308,6 +1421,7 @@ export default defineComponent({
                             openCtx: (x: number, y: number) => onCtx('', x, y),
                             handleDrop: (x: number, y: number, paths: string[]) =>
                                 handleFileDrop(x, y, paths),
+                            zoomPct: () => zoomPct.value,
                         });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
@@ -1338,6 +1452,13 @@ export default defineComponent({
             previewPage,
             views,
             setBoxRef,
+            canvasSize,
+            // 缩放
+            zoomPct,
+            zoomBy,
+            zoomActual,
+            zoomFit,
+            onCanvasWheel,
             thumbSizeOptions,
             onViewModeChange,
             onThumbWidthChange,
@@ -1463,19 +1584,40 @@ export default defineComponent({
     overflow: hidden;
 }
 
-.ws-canvas {
+/* 画布外层：工具条相对它定位；画布本身是滚动容器，放大后能看别处 */
+.ws-canvas-wrap {
     position: relative;
     flex: 1;
     min-width: 0;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
+    flex-direction: column;
+}
+
+.ws-canvas {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    overflow: auto;
+    /* 始终预留滚动条位置：否则放大时滚动条出现会改变可用宽度，
+       触发"测量 -> 重排 -> 再测量"的来回抖动 */
+    scrollbar-gutter: stable;
     background: var(--ws-bg-canvas);
     padding: 12px;
 }
 
-/* 页面内容工具条：浮在画布左上角 */
+/* 画布里的内容用 margin:auto 居中，而不是给容器 justify-content:center ——
+   后者在内容超出容器时会把左上角裁掉且滚不到，是 flex 居中 + 溢出的经典坑 */
+.ws-canvas > .pv-row,
+.ws-canvas > .ws-hint {
+    margin: auto;
+}
+
+.zoom-pct {
+    min-width: 58px;
+    text-align: center;
+}
+
+/* 页面内容工具条：浮在画布左上角，不随画布滚动 */
 .ws-modes {
     position: absolute;
     left: 10px;
@@ -1483,11 +1625,13 @@ export default defineComponent({
     z-index: 5;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 4px 8px;
     background: var(--ws-panel);
     border: 1px solid var(--ws-border);
     border-radius: 6px;
+    max-width: calc(100% - 20px);
 }
 
 .ws-modehint {
@@ -1659,7 +1803,9 @@ export default defineComponent({
 }
 
 .ws-diag {
-    margin-top: 6px;
+    /* 允许换行：单行会被窗口右边裁掉，验证时就看不到最后几条记录 */
+    white-space: normal;
+    word-break: break-all;    margin-top: 6px;
     font-size: 11px;
     color: var(--ws-text-faint);
     overflow: hidden;

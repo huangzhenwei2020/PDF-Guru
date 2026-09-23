@@ -55,10 +55,15 @@ export type WSSource = {
     pages: WSPage[];
 };
 
-// 缩略图轨道用 150px，大图预览用 900px。
-// Go 侧的清单文件按宽度分开存放，因此两者可以各自渲染互不干扰。
 const THUMB_WIDTH = 150;
+
+// 大图渲染宽度。分两档：正常一档，放大时换高分辨率档——
+// 只把 900px 的图拉伸放大会是糊的，而"放大就是为了看清小字"，
+// 所以跨过阈值时重新渲染当前页，而不是拿旧图凑合。
 const PREVIEW_WIDTH = 900;
+const PREVIEW_WIDTH_HI = 2000;
+/** 超过这个缩放倍数就换成高分辨率档 */
+const HI_RES_THRESHOLD = 1.2;
 
 /** 撤销栈上限。一份 1000 页清单的快照约 60KB，100 步也只有 6MB。 */
 const UNDO_LIMIT = 100;
@@ -212,6 +217,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         thumbWidth: 150,
         /** 画布视图：单页 / 双页。同样是视图偏好 */
         viewMode: "single" as "single" | "dual",
+        /** 画布缩放：绝对倍数（1 = 渲染图 1 像素对 1 CSS 像素）。视图偏好，不计入未保存 */
+        zoom: 1,
+        /** "fit" = 自动适应窗口（随窗口大小变化）；"custom" = 用户指定倍数 */
+        zoomMode: "fit" as "fit" | "custom",
         /** 撤销 / 重做栈，存的是清单快照 */
         past: [] as WSItem[][],
         future: [] as WSItem[][],
@@ -267,6 +276,11 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         mainPath(state): string {
             return Object.values(state.sources)[0]?.path ?? "";
         },
+        /** 当前该用多大的分辨率渲染大图 */
+        previewWidth(state): number {
+            const z = state.zoomMode === "custom" ? state.zoom : 1;
+            return z > HI_RES_THRESHOLD ? PREVIEW_WIDTH_HI : PREVIEW_WIDTH;
+        },
         /** 界面标题：用第一个来源的文件名；没有来源说明是新建的文档 */
         title(state): string {
             const first = Object.values(state.sources)[0];
@@ -302,7 +316,33 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
 
         /** 大图固定用 900px 渲染，因此不带宽度 */
         previewKey(docId: string, pageIndex: number): string {
-            return `pv:${docId}:${pageIndex}`;
+            return `pv:${docId}:${pageIndex}@${this.previewWidth}`;
+        },
+
+        /**
+         * 切换大图渲染分辨率档位。
+         *
+         * 放大时如果继续用 900px 的图拉伸，字是糊的——而"放大"这件事的
+         * 全部意义就是看清小字，所以跨过阈值要换高分辨率档重渲染。
+         * 换档会在缓存里留下两套图，来回缩放因此不会每次都重渲染。
+         */
+        setZoom(z: number) {
+            const next = Math.max(0.15, Math.min(6, z));
+            const before = this.previewWidth;
+            this.zoom = next;
+            this.zoomMode = "custom";
+            if (this.previewWidth !== before && this.current) {
+                void this.focusItem(this.current);
+            }
+        },
+
+        /** 回到"适应窗口"：由画布按可用空间自动决定倍数。 */
+        zoomFit() {
+            const before = this.previewWidth;
+            this.zoomMode = "fit";
+            if (this.previewWidth !== before && this.current) {
+                void this.focusItem(this.current);
+            }
         },
 
         /**
@@ -360,6 +400,9 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.dirty = false;
             this.savedSig = "";
             this.decor = defaultDecor();
+            // 每份新文档都从"适应窗口"开始
+            this.zoomMode = "fit";
+            this.zoom = 1;
             // 在途请求的缓存也要清：虽然 docId 单调递增不会撞键，
             // 但留着旧文档的条目没有意义
             inflightThumbs.clear();
@@ -540,8 +583,11 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             if (!task) {
                 const docId = item.docId;
                 const pageNo = item.pageIndex + 1;
+                // 用当前档位的宽度请求（放大时要高分辨率，否则是糊的）。
+                // 先取出到局部变量，避免 await 期间档位变化导致键与请求不一致。
+                const width = this.previewWidth;
                 task = (async () => {
-                    const list: any = await WorkspaceThumbs(docId, String(pageNo), PREVIEW_WIDTH);
+                    const list: any = await WorkspaceThumbs(docId, String(pageNo), width);
                     return list && list.length ? (list[0] as WSThumb) : null;
                 })();
                 inflightPreviews.set(key, task);
