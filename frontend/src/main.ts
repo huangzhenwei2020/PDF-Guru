@@ -5,6 +5,11 @@ import Antd from "ant-design-vue";
 import "ant-design-vue/dist/antd.css";
 import "./theme.css";
 import { applyTheme, applyThemeVars, readStoredTheme } from "./theme";
+import { installDropFix } from "./dropfix";
+
+// 修掉 Wails 拖放的 bug（非文件条目会被映射成 undefined 一起发给 WebView2）。
+// 必须尽早装上：拖放随时可能发生，而它只是替换一个函数，没有副作用。
+installDropFix();
 
 // 主题：变量必须在挂载前同步设好，否则深色用户会看到一瞬间的亮色。
 // 组件库那 725KB 的暗色样式是异步加载的，挂载后再注入即可——它只影响 .ant-* 的配色，

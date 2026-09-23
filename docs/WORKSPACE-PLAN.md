@@ -506,6 +506,44 @@ docx（拒绝且未插入）、拖到画布区（追加到末尾）、空工作�
 - 回归全绿：模型 87/87、导出引擎 31/31、界面导出链路 8/8、后端 36/36、
   拖拽重排、方向键翻页、缩放跨档位（显示宽 1089 / 读数 121%）均正常。
 
+### 计划外补充：真实拖放报错（用户实测发现）
+
+用户实测拖入文件时，界面弹出一条 JS 错误：
+
+> Failed to execute 'postMessageWithAdditionalObjects' on 'EmbeddedBrowserWebView':
+> Failed to post a message: additional File object is not a file on the disk.
+
+这是 **Wails v2.16 自身的 bug**。它的前端 `onDrop` 这样取文件：
+
+```js
+files = [...e.dataTransfer.items].map((item) => {
+    if (item.kind === 'file') return item.getAsFile();
+    // 非 file 的条目没有返回值 -> undefined
+});
+window.runtime.ResolveFilePaths(e.x, e.y, files);
+```
+
+而从资源管理器拖文件时，`items` 里**通常同时存在** text/uri-list 之类的非文件条目，
+于是数组变成 `[File, undefined, undefined]`，原样交给 WebView2 就抛上面那条错。
+后果是**路径根本没送到 Go**：拖放看起来毫无反应，而报错只出现在控制台
+（生产构建看不到）——直到我把未捕获异常也显示到诊断条上，它才暴露出来。
+
+修法：在应用侧把 `window.runtime.ResolveFilePaths` 包一层，过滤掉非 `File` 项，
+并在一个真实文件都没有时直接不发（见 `frontend/src/dropfix.ts`）。
+选择在应用侧修而不是改 node_modules / Go module cache：那两处都不是我们的代码，
+升级或重装就会被覆盖，问题会悄悄回来。两处安装（主入口 + 组件挂载）并记录
+"是否装上"，因为 `window.runtime` 的注入时机不保证早于本模块。
+
+**这也说明我之前的验证仍有盲区**：`droptest` 只证明了"前端拖放监听已注册"，
+没有覆盖"路径能否送达 Go"。真实投递这一段始终只能靠用户实测——这次正是靠用户
+贴出的报错才定位到。
+
+**验证**：给修补做了对照测试——用同一份"全是非文件条目"的数组，
+原实现会把 `undefined` 交给 WebView2（异步抛出，所以同步 try/catch 抓不到，
+这也解释了它为什么表现为 Uncaught TypeError），修补后 `过滤非文件项=2、实际转发=0`，
+即根本不发。另回归确认拖放监听仍注册（`带Files被拦截=true`）、
+拖入插入仍正常（插入 3 页、清单 5→8）、模型/导出/后端全绿。
+
 ### Phase 6 —— 打磨
 
 - [x] 大文档性能：**按可见区渐进渲染**

@@ -25,6 +25,7 @@ import { displayRectToPageRect, parseRange, type NormRect, type WSItem } from ".
 import { WorkspacePageImages } from "../../../wailsjs/go/main/App";
 import { setTheme } from "../../theme";
 import { useMenuState } from "../../store/menu";
+import { dropFixOriginal, dropFixStats } from "../../dropfix";
 
 /** 把 "1,3-5" 这样的位置表达式翻译成当前清单里的 id。 */
 function positionsToIds(seq: WSItem[], spec: string): string[] {
@@ -272,6 +273,33 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 await new Promise((r) => setTimeout(r, 500));
                 log.push(
                     `scroll:${arg} 当前页=${store.currentPos + 1}/${store.seq.length} 缓存大图=${Object.keys(store.previewCache).length}`
+                );
+                break;
+            }
+            // dropfix —— 对照验证 Wails 拖放 bug 的修补。
+            // A 用未经修补的原实现、B 用修补后的实现，喂同一份"全是非文件条目"的数组：
+            // 原实现会把 undefined 交给 WebView2 并抛 "not a file on the disk"，修补后直接跳过。
+            case "dropfix": {
+                const orig = dropFixOriginal();
+                const rt: any = (window as any).runtime;
+                const bad = [undefined, undefined];
+                let aErr = "";
+                try {
+                    orig?.(10, 10, bad);
+                } catch (e: any) {
+                    aErr = String(e?.message ?? e);
+                }
+                let bErr = "";
+                try {
+                    rt?.ResolveFilePaths?.(10, 10, bad);
+                } catch (e: any) {
+                    bErr = String(e?.message ?? e);
+                }
+                const s = dropFixStats();
+                log.push(
+                    `dropfix 已安装=${s.installed} A(原实现)=${aErr ? "同步报错" : "未同步报错"}` +
+                        ` B(修补后)=${bErr ? "同步报错" : "未同步报错"}` +
+                        ` 过滤非文件项=${s.filteredNonFile} 实际转发=${s.forwarded}次/${s.forwardedItems}项`
                 );
                 break;
             }

@@ -540,6 +540,7 @@ import {
 } from '@ant-design/icons-vue';
 import { SelectFile, SelectMultipleFiles, SelectDir, SaveFile, SetClipboard, WorkspacePageText, WorkspacePageImages } from '../../../wailsjs/go/main/App';
 import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
+import { installDropFix } from '../../dropfix';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
@@ -597,6 +598,12 @@ export default defineComponent({
         window.addEventListener('unhandledrejection', (ev: PromiseRejectionEvent) => {
             const r: any = ev.reason;
             jsErr.value = String(r?.message ?? r ?? '');
+        });
+        // 拖放修补贴层捕获到的失败：给用户一句人话，而不是一条没人看得见的未捕获异常
+        window.addEventListener('pdfguru:drop-error', (ev: Event) => {
+            const msg = String((ev as CustomEvent).detail ?? '');
+            jsErr.value = msg;
+            message.error('拖放失败：' + msg);
         });
 
         // Wails 生产环境是 http://wails.localhost，相对路径可直接用；
@@ -1654,6 +1661,13 @@ export default defineComponent({
             // 必须由前端调用这个 API，监听器才会装上——之前只配了 Go 侧的
             // EnableFileDrop 却没在前端注册，真实的系统拖放其实是不工作的
             // （当时的"验证"直接调了 Go 处理函数，绕过了真实投递）。
+            //
+            // 先装拖放修补：Wails 会把 dataTransfer.items 里的非文件条目映射成 undefined
+            // 一起发给 WebView2，导致"additional File object is not a file on the disk"。
+            // 主入口已经装过一次，这里再兜一次——若那时 window.runtime 还没注入就会漏掉。
+            if (!installDropFix()) {
+                jsErr.value = '拖放修补未安装（window.runtime 未就绪）';
+            }
             OnFileDrop((x: number, y: number, paths: string[]) => {
                 void handleFileDrop(x, y, paths);
             }, false);
