@@ -126,6 +126,59 @@ def workspace_render(doc_path: str, pages: str, width: int, output_dir: str, man
         utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
 
 
+def workspace_convert(input_path: str, output_path: str):
+    """把任意 PyMuPDF 能打开的文件转成 PDF —— 拖入非 PDF 文件时走这里。
+
+    支持的输入：XPS / EPUB / MOBI / FB2 / CBZ / SVG，以及常见图片
+    （PNG / JPEG / BMP / GIF / TIFF / WebP …）。
+    **docx / xlsx / pptx 这类 Office 格式 PyMuPDF 打不开**，这里会如实报错，
+    而不是产出一个坏文件——上层据此给出明确提示。
+    """
+    try:
+        doc: fitz.Document = fitz.open(input_path)  # 打不开会直接抛异常
+        pdf = fitz.open("pdf", doc.convert_to_pdf())
+        # 尽量保留目录，阅读体验会好很多
+        try:
+            toc = doc.get_toc()
+            if toc:
+                pdf.set_toc(toc)
+        except Exception:
+            pass
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        pdf.save(output_path, garbage=4, deflate=True)
+        pdf.close()
+        doc.close()
+        utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+    except:
+        logger.error(traceback.format_exc())
+        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+
+
+def workspace_merge_images(input_paths: list, output_path: str):
+    """把若干图片合并成一个多页 PDF（每张一页，按给定顺序）。
+
+    与 workspace_convert 的区别：这个是"多图合成一份文档"。
+    图片顺序按调用方给的顺序，不重排——用户拖进来的次序就是他要的次序。
+    """
+    try:
+        writer: fitz.Document = fitz.open()
+        for p in input_paths:
+            img = fitz.open(p)
+            pdf = fitz.open("pdf", img.convert_to_pdf())
+            writer.insert_pdf(pdf)
+            pdf.close()
+            img.close()
+        if writer.page_count == 0:
+            raise ValueError("没有可用的图片")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        writer.save(output_path, garbage=4, deflate=True)
+        writer.close()
+        utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+    except:
+        logger.error(traceback.format_exc())
+        utils.dump_json(cmd_output_path, {"status": "error", "message": traceback.format_exc()})
+
+
 def _overlay_via_mask(width, height, content_list, tmpdir, tag,
                       font_family=None, font_size=10, font_color="#000000",
                       opacity=1, unit="cm", margin_bbox=None):

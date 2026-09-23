@@ -4,6 +4,7 @@ import {
     WorkspaceThumbs,
     WorkspaceCacheRoot,
     WorkspaceAddImageSource,
+    WorkspaceAddConvertedSource,
     WorkspaceBuild,
     WorkspaceSetDirty,
     WorkspaceAutoOpenPath,
@@ -16,6 +17,7 @@ import {
     clearOps,
     cloneOps,
     createBlankItem,
+    createPageItem,
     duplicateItems,
     indexOfId,
     indicesToRangeSpec,
@@ -163,6 +165,27 @@ function baseName(p: string): string {
     const parts = p.split(/[\\/]/);
     return parts[parts.length - 1] || p;
 }
+
+function extOf(p: string): string {
+    const b = baseName(p);
+    const i = b.lastIndexOf(".");
+    return i >= 0 ? b.slice(i + 1).toLowerCase() : "";
+}
+
+/**
+ * 能被 PyMuPDF 直接当图片打开的扩展名（拖入后会合并成一份多页 PDF）。
+ * 多列几个没关系：真打不开时后端会如实报错。
+ */
+const IMAGE_EXTS = [
+    "png", "jpg", "jpeg", "jpe", "bmp", "gif", "tif", "tiff",
+    "webp", "psd", "pnm", "pgm", "ppm", "pbm", "jxr", "hdr",
+];
+
+/**
+ * Office 系列：PyMuPDF 打不开，转换必然失败。
+ * 提前拦下来，既省掉一次无用的子进程，也能给出比"堆栈"清楚得多的提示。
+ */
+const OFFICE_EXTS = ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "wps", "et", "dps"];
 
 export const useWorkspaceState = defineStore("WorkspaceState", {
     state: () => ({
@@ -383,6 +406,28 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 pages: info?.pages ?? [],
             };
             return docId;
+        },
+
+        /** 把任意受支持的文件转成 PDF 并登记为来源。返回其 docId。 */
+        async registerConvertedSource(path: string): Promise<string> {
+            const info: any = await WorkspaceAddConvertedSource(path);
+            const docId: string = info?.docId ?? "";
+            if (!docId) throw new Error("转换失败");
+            this.sources[docId] = {
+                docId,
+                path: info?.path ?? path,
+                pageCount: info?.pageCount ?? 0,
+                pages: info?.pages ?? [],
+            };
+            return docId;
+        },
+
+        /** 按扩展名选择登记方式。PDF 直接用，图片合并，其余尝试转换。 */
+        async registerAny(path: string): Promise<string> {
+            const ext = extOf(path);
+            if (ext === "pdf") return this.registerSource(path);
+            if (IMAGE_EXTS.includes(ext)) return this.registerImageSource([path]);
+            return this.registerConvertedSource(path);
         },
 
         /**
@@ -767,6 +812,70 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             return this.seq.filter(
                 (it) => target.has(it.id) && it.kind === "page" && it.ops?.removeAnnots
             ).length;
+        },
+
+        // --- 拖入文件 ------------------------------------------------------
+
+        /**
+         * 把拖入的文件插到指定位置。
+         *
+         * 分组规则：连续的多张图片合成**一份**多页 PDF（顺序就是拖入顺序，
+         * 不按文件名重排——用户拖的次序就是他要的次序）；其余每个文件各自一份。
+         * 全部内容一次性插入，因此在撤销栈里只算一步。
+         */
+        async insertDroppedFiles(
+            paths: string[],
+            at?: number
+        ): Promise<{ inserted: number; errors: string[] }> {
+            const errors: string[] = [];
+            const groups: { kind: "pdf" | "images" | "doc"; paths: string[] }[] = [];
+
+            for (const p of paths) {
+                const ext = extOf(p);
+                if (OFFICE_EXTS.includes(ext)) {
+                    errors.push(`${baseName(p)}：Office 文档无法直接转换，请先另存为 PDF`);
+                    continue;
+                }
+                if (ext === "pdf") {
+                    groups.push({ kind: "pdf", paths: [p] });
+                } else if (IMAGE_EXTS.includes(ext)) {
+                    const last = groups[groups.length - 1];
+                    if (last && last.kind === "images") last.paths.push(p);
+                    else groups.push({ kind: "images", paths: [p] });
+                } else {
+                    groups.push({ kind: "doc", paths: [p] });
+                }
+            }
+
+            const wasEmpty = this.seq.length === 0;
+            const pos = at ?? this.insertAt;
+            const items: WSItem[] = [];
+
+            for (const g of groups) {
+                try {
+                    const docId =
+                        g.kind === "pdf"
+                            ? await this.registerSource(g.paths[0])
+                            : g.kind === "images"
+                              ? await this.registerImageSource(g.paths)
+                              : await this.registerConvertedSource(g.paths[0]);
+                    const src = this.sources[docId];
+                    for (let i = 0; i < src.pageCount; i++) {
+                        items.push(createPageItem(docId, i));
+                    }
+                } catch (e: any) {
+                    errors.push(String(e?.message ?? e));
+                }
+            }
+
+            if (items.length) {
+                this.apply(insertItems(this.seq, items, pos), items.map((it) => it.id));
+                await this.loadThumbs();
+                await this.focusItem(items[0].id);
+                // 往空工作区里拖文件，语义上是"打开"而不是"改动"，因此不算未保存
+                if (wasEmpty) this.markSaved();
+            }
+            return { inserted: items.length, errors };
         },
 
         // --- 保存与导出（Phase 4）-----------------------------------------

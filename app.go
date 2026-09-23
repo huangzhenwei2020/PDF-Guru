@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,8 +23,14 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// 拖拽文件到窗口：运行时给的是绝对路径（WebView2 自身拿不到，故必须由它提供）
-	wails_runtime.OnFileDrop(ctx, a.onFileDrop)
+	// 拖拽文件到窗口：EnableFileDrop 让 webview 把拖入文件的绝对路径交给运行时。
+	//
+	// 路由由**前端**决定：它用 wails:file-drop 事件里的客户端坐标 + elementFromPoint
+	// 判断落在大纲的哪一行（插到该位置）、还是落在别处（打开/合并）。
+	// Go 侧因此只记一条日志，不做业务判断——否则前后端会各处理一次，文件被插两遍。
+	wails_runtime.OnFileDrop(ctx, func(x, y int, paths []string) {
+		logger.Printf("拖入 %d 个文件 (x=%d y=%d)\n", len(paths), x, y)
+	})
 
 	// 无人值守验证用的测试钩子：设置 PDFGURU_WS_AUTODROP 为若干路径（用 | 分隔），
 	// 延时触发一次"拖入"。它走的是与真实拖放**完全相同**的链路
@@ -35,24 +40,7 @@ func (a *App) startup(ctx context.Context) {
 		go func() {
 			// 等前端挂上事件监听
 			time.Sleep(6 * time.Second)
-			a.onFileDrop(0, 0, strings.Split(auto, "|"))
+			wails_runtime.EventsEmit(a.ctx, "workspace:legacy-drop", strings.Split(auto, "|"))
 		}()
 	}
-}
-
-// onFileDrop 处理"把文件拖进窗口"。过滤出 PDF 后发给前端；
-// 前端负责决定是打开还是追加，Go 这边不掺和业务判断。
-func (a *App) onFileDrop(_ int, _ int, paths []string) {
-	pdfs := make([]string, 0, len(paths))
-	for _, p := range paths {
-		if strings.EqualFold(filepath.Ext(p), ".pdf") {
-			pdfs = append(pdfs, p)
-		}
-	}
-	if len(pdfs) == 0 {
-		logger.Println("拖入的文件里没有 PDF，已忽略")
-		return
-	}
-	logger.Printf("拖入 %d 个 PDF\n", len(pdfs))
-	wails_runtime.EventsEmit(a.ctx, "workspace:open", pdfs)
 }

@@ -491,7 +491,7 @@ import {
     UndoOutlined,
 } from '@ant-design/icons-vue';
 import { SelectFile, SelectMultipleFiles, SelectDir, SaveFile, SetClipboard, WorkspacePageText, WorkspacePageImages } from '../../../wailsjs/go/main/App';
-import { EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime';
+import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
@@ -1098,25 +1098,46 @@ export default defineComponent({
         };
 
         /**
-         * 把拖进窗口的 PDF 打开。拖入多个时，第一个作为工作区内容、
-         * 其余追加为来源——这恰好就是"把几份 PDF 合成一份"的自然操作。
+         * 处理从资源管理器拖进来的文件。
+         *
+         * Wails 给的 x/y 是**客户端坐标**（它的前端实现里就是拿这两个值调
+         * elementFromPoint 的），因此可以精确判断落在哪一行：
+         * 落在大纲里就插到该行位置，落在别处就追加到末尾。
+         *
+         * 注册时传 useDropTarget=false，由我们自己按坐标区分，
+         * 而不是要求元素先标上 `--wails-drop-target`——那样"拖到窗口空白处打开"就失效了。
          */
-        const openDropped = async (paths: string[]) => {
-            if (!paths || !paths.length) return;
+        const handleFileDrop = async (
+            x: number,
+            y: number,
+            paths: string[]
+        ): Promise<{ inserted: number; errors: string[] }> => {
+            if (!paths || !paths.length) return { inserted: 0, errors: [] };
+            let at = store.seq.length;
+            const el = document.elementFromPoint(x, y) as HTMLElement | null;
+            if (el?.closest('.rail')) {
+                // 落在缩略图轨道里：按行与上下半区算出插入位置
+                const row = el.closest('.row') as HTMLElement | null;
+                if (row) {
+                    const i = Number(row.dataset.index);
+                    const r = row.getBoundingClientRect();
+                    at = i + (y > r.top + r.height / 2 ? 1 : 0);
+                }
+            }
+            imgFailed.value = false;
+            urlMode.value = 'relative';
             try {
-                imgFailed.value = false;
-                urlMode.value = 'relative';
-                await store.open(paths[0]);
-                for (let i = 1; i < paths.length; i++) {
-                    const docId = await store.registerSource(paths[i]);
-                    store.appendSource(docId);
+                const res = await store.insertDroppedFiles(paths, at);
+                if (res.inserted) {
+                    message.success(`已插入 ${res.inserted} 页`);
                 }
-                if (paths.length > 1) {
-                    message.success(`已合并 ${paths.length} 个 PDF`);
+                if (res.errors.length) {
+                    message.error(res.errors.join('；'), 6);
                 }
-                if (store.error) message.error(store.error);
+                return res;
             } catch (e: any) {
                 fail(e);
+                return { inserted: 0, errors: [String(e?.message ?? e)] };
             }
         };
 
@@ -1251,10 +1272,13 @@ export default defineComponent({
         onMounted(async () => {
             store.loadCacheRoot();
             window.addEventListener('keydown', onKey);
-            // 拖拽文件到窗口：Go 侧过滤出 PDF 后把路径发过来
-            EventsOn('workspace:open', (paths: string[]) => {
-                openDropped(paths);
-            });
+            // 拖拽文件：注册 Wails 的拖放监听。
+            // 必须由前端调用这个 API，监听器才会装上——之前只配了 Go 侧的
+            // EnableFileDrop 却没在前端注册，真实的系统拖放其实是不工作的
+            // （当时的"验证"直接调了 Go 处理函数，绕过了真实投递）。
+            OnFileDrop((x: number, y: number, paths: string[]) => {
+                void handleFileDrop(x, y, paths);
+            }, false);
             if (canvasRef.value && typeof ResizeObserver !== 'undefined') {
                 ro = new ResizeObserver(() => {
                     const el = canvasRef.value;
@@ -1282,6 +1306,8 @@ export default defineComponent({
                             },
                             openText: () => doExtractText(),
                             openCtx: (x: number, y: number) => onCtx('', x, y),
+                            handleDrop: (x: number, y: number, paths: string[]) =>
+                                handleFileDrop(x, y, paths),
                         });
                         autoLog.value = `· autoops=[${log.join(' ')}]`;
                         // 脚本可能把当前页删掉了，把大图重新对齐一次
@@ -1295,7 +1321,7 @@ export default defineComponent({
 
         onUnmounted(() => {
             window.removeEventListener('keydown', onKey);
-            EventsOff('workspace:open');
+            OnFileDropOff();
             if (ro) ro.disconnect();
         });
 

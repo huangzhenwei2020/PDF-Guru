@@ -161,6 +161,54 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 }
                 break;
             }
+            // droptest —— 验证"前端拖放监听是否真的注册了"。
+            //
+            // 为什么需要它：只配 Go 侧的 EnableFileDrop 是不够的，前端必须调用
+            // OnFileDrop() 才会装上 dragover/drop 监听。之前就是漏了这一步，
+            // 真实的系统拖放其实不工作，而当时的"验证"直接调了 Go 处理函数、绕过了它。
+            //
+            // 判据：Wails 的 onDrop 对文件拖放**无条件**调用 preventDefault（在检查
+            // enable 标志之前），所以合成一个带 Files 的 drop 事件后看 defaultPrevented
+            // 就能知道监听在不在。再用一个不带 Files 的事件做对照，确保信号本身有意义。
+            case "droptest": {
+                const mk = (types: string[]) => {
+                    const ev: any = new Event("drop", { bubbles: true, cancelable: true });
+                    // dataTransfer 要造得像一点：只给 types 的话，
+                    // 处理器访问 items/files/dropEffect 会抛异常，把诊断条弄脏
+                    Object.defineProperty(ev, "dataTransfer", {
+                        value: {
+                            types,
+                            items: [],
+                            files: [],
+                            dropEffect: "copy",
+                            effectAllowed: "all",
+                            setData: () => undefined,
+                            getData: () => "",
+                        },
+                    });
+                    return ev;
+                };
+                const withFiles = mk(["Files"]);
+                window.dispatchEvent(withFiles);
+                const withoutFiles = mk(["text/plain"]);
+                window.dispatchEvent(withoutFiles);
+                log.push(
+                    `droptest: 带Files被拦截=${withFiles.defaultPrevented} / 不带Files被拦截=${withoutFiles.defaultPrevented}`
+                );
+                break;
+            }
+            // filedrop:x,y|路径1|路径2 —— 直接走与真实拖放相同的落点处理逻辑
+            // （只有"鼠标拖过来"这个手势和 Wails 的路径解析没被覆盖）
+            case "filedrop": {
+                const bar = arg.indexOf("|");
+                const head = bar >= 0 ? arg.slice(0, bar) : arg;
+                const paths = bar >= 0 ? arg.slice(bar + 1).split("|") : [];
+                const [x, y] = head.split(",").map(Number);
+                const res = await ui?.handleDrop?.(x, y, paths);
+                const errs = res?.errors?.length ? ` 错误=[${res.errors.join(" / ")}]` : "";
+                log.push(`filedrop:(${x},${y}) ${paths.length} 个文件 -> 插入 ${res?.inserted ?? "?"} 页${errs}`);
+                break;
+            }
             // menu:index|settings|... —— 切换左侧菜单页。
             // 比用合成点击去猜坐标可靠得多（猜过一次，点到了隔壁菜单项）。
             case "menu": {
@@ -318,9 +366,11 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 break;
             }
             case "del": {
-                const ids = positionsToIds(store.seq, arg);
-                if (ids.length) store.doDelete(ids);
-                log.push(`del:${arg}`);
+                // 不带参数时删除"当前选区"，与界面按钮一致；
+                // 之前无参数会解析成空列表并静默跳过，很坑
+                const ids = arg ? positionsToIds(store.seq, arg) : [];
+                store.doDelete(ids.length ? ids : undefined);
+                log.push(`del:${arg || "(选区)"}`);
                 break;
             }
             case "dup": {

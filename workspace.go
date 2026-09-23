@@ -157,8 +157,22 @@ func (a *App) WorkspaceOpen(path string) (WSDocInfo, error) {
 	return a.registerDoc(path)
 }
 
-// WorkspaceAddImageSource 把若干图片合成一个 PDF 并登记为来源，供"插入图片"使用。
-// 复用已有的 convert 命令（png -> pdf，合并），因此不需要新增 Python 命令。
+// wsNewSourcePath 为"转换出来的来源文档"分配一个缓存路径。
+func (a *App) wsNewSourcePath(prefix string) (string, error) {
+	wsMu.Lock()
+	wsSeq++
+	seq := wsSeq
+	wsMu.Unlock()
+
+	dir := filepath.Join(wsCacheRoot, "src")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", errors.Wrap(err, "创建来源目录失败")
+	}
+	return filepath.Join(dir, fmt.Sprintf("%s-%d.pdf", prefix, seq)), nil
+}
+
+// WorkspaceAddImageSource 把若干图片合成一个多页 PDF 并登记为来源。
+// **保持调用方给的顺序**——用户拖进来的次序就是他要的次序，不做按名重排。
 func (a *App) WorkspaceAddImageSource(images []string) (WSDocInfo, error) {
 	var info WSDocInfo
 	wsInit()
@@ -172,22 +186,36 @@ func (a *App) WorkspaceAddImageSource(images []string) (WSDocInfo, error) {
 		}
 	}
 
-	wsMu.Lock()
-	wsSeq++
-	seq := wsSeq
-	wsMu.Unlock()
-
-	srcDir := filepath.Join(wsCacheRoot, "src")
-	if err := os.MkdirAll(srcDir, 0755); err != nil {
-		return info, errors.Wrap(err, "创建来源目录失败")
+	outPDF, err := a.wsNewSourcePath("images")
+	if err != nil {
+		return info, err
 	}
-	outPDF := filepath.Join(srcDir, fmt.Sprintf("images-%d.pdf", seq))
-
-	// name_digit 让 img2 排在 img10 前面，比纯字典序符合直觉
-	if err := a.PDFConversion(images, outPDF, 0, true, "name_digit", "asc", "png", "pdf", "", "", ""); err != nil {
+	args := append([]string{"ws-merge-images", "--output", outPDF}, images...)
+	if err := a.cmdRunner(args, "pdf"); err != nil {
 		return info, errors.Wrap(err, "图片转 PDF 失败")
 	}
+	return a.registerDoc(outPDF)
+}
 
+// WorkspaceAddConvertedSource 把任意 PyMuPDF 能打开的文件转成 PDF 并登记为来源。
+// 拖入非 PDF 文件（图片 / EPUB / MOBI / XPS / FB2 / CBZ / SVG）时走这里。
+//
+// 转换失败时给出的是"这个格式可能不受支持"，而不是把 python 堆栈抛给用户——
+// 因为最常见的原因就是拖进了 docx/xlsx/pptx，而 PyMuPDF 打不开它们。
+func (a *App) WorkspaceAddConvertedSource(path string) (WSDocInfo, error) {
+	var info WSDocInfo
+	wsInit()
+
+	if err := a.CheckFileExists(path); err != nil {
+		return info, err
+	}
+	outPDF, err := a.wsNewSourcePath("conv")
+	if err != nil {
+		return info, err
+	}
+	if err := a.cmdRunner([]string{"ws-convert", "--output", outPDF, path}, "pdf"); err != nil {
+		return info, fmt.Errorf("%s 无法转换为 PDF（该格式可能不受支持，Office 文档请先另存为 PDF）", filepath.Base(path))
+	}
 	return a.registerDoc(outPDF)
 }
 

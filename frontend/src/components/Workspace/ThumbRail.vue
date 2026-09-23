@@ -1,5 +1,6 @@
 <template>
-    <div ref="railEl" class="rail" :class="{ dragging }" @scroll="onScroll"
+    <div ref="railEl" class="rail" :class="{ dragging, 'file-over': fileDrag }" @scroll="onScroll"
+        @dragover="onFileDragOver" @dragleave="onFileDragLeave" @drop="onFileDropLocal"
         :style="{ width: railWidth + 'px', flexBasis: railWidth + 'px' }">
         <div v-for="(row, i) in rows" :key="row.id" class="row" :data-index="i" :data-id="row.id" :class="{
             sel: selectedSet.has(row.id),
@@ -302,8 +303,60 @@ export default defineComponent({
 
         const isRot90 = (r: number) => r === 90 || r === 270;
 
-        /** 编辑标记的悬停说明 */
-        const opsTitle = (row: RailRow) => {
+        // --- 从资源管理器拖文件进来时的落点提示 -----------------------------
+        //
+        // 只有"路径"由 Wails 提供（父组件的 OnFileDrop 回调），
+        // 这里只负责在拖拽过程中显示插入位置，让用户知道会插到哪一行。
+
+        const fileDrag = ref(false);
+
+        const isFileDrag = (e: DragEvent) => !!e.dataTransfer?.types?.includes('Files');
+
+        const onFileDragOver = (e: DragEvent) => {
+            if (!isFileDrag(e)) return;
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+            fileDrag.value = true;
+
+            if (!rects.length) cacheRects();
+            let idx = -1;
+            let after = false;
+            for (let i = 0; i < rects.length; i++) {
+                if (e.clientY >= rects[i].top && e.clientY <= rects[i].bottom) {
+                    idx = i;
+                    after = e.clientY > rects[i].top + (rects[i].bottom - rects[i].top) / 2;
+                    break;
+                }
+            }
+            if (idx < 0 && rects.length && e.clientY > rects[rects.length - 1].bottom) {
+                // 落在最后一行下方 -> 追加到末尾
+                idx = rects.length - 1;
+                after = true;
+            }
+            dropIndex.value = idx;
+            dropAfter.value = after;
+        };
+
+        const onFileDragLeave = (e: DragEvent) => {
+            if (!isFileDrag(e)) return;
+            // 行与行之间移动也会触发 dragleave，因此要确认真的离开了轨道
+            const to = e.relatedTarget as Node | null;
+            if (to && railEl.value?.contains(to)) return;
+            fileDrag.value = false;
+            dropIndex.value = -1;
+            dropAfter.value = false;
+        };
+
+        const onFileDropLocal = (e: DragEvent) => {
+            if (!isFileDrag(e)) return;
+            e.preventDefault();
+            fileDrag.value = false;
+            dropIndex.value = -1;
+            dropAfter.value = false;
+            // 真正的插入由父组件的 OnFileDrop 回调完成——只有那里拿得到文件路径
+        };
+
+        /** 编辑标记的悬停说明 */        const opsTitle = (row: RailRow) => {
             const parts: string[] = [];
             if (row.ops.crop) parts.push('已裁剪');
             if (row.ops.masks) parts.push(`遮盖 ${row.ops.masks} 处`);
@@ -343,6 +396,10 @@ export default defineComponent({
         return {
             railEl,
             railWidth,
+            fileDrag,
+            onFileDragOver,
+            onFileDragLeave,
+            onFileDropLocal,
             selectedSet,
             dragSet,
             dragging,
@@ -377,6 +434,11 @@ export default defineComponent({
 
 .rail.dragging {
     cursor: grabbing;
+}
+
+/* 有文件悬在轨道上方：给个整体描边，配合行间的插入线 */
+.rail.file-over {
+    box-shadow: inset 0 0 0 2px var(--ws-accent);
 }
 
 .row {

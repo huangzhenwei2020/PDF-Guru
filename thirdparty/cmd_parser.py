@@ -399,4 +399,16 @@ def getParser():
     ws_build_parser.add_argument("--compress", action="store_true",
                                  help="更强的压缩（garbage=4 + clean，牺牲一点速度）")
 
+    # ws-convert: 任意 PyMuPDF 能打开的文件 -> PDF（拖入非 PDF 时用）
+    ws_convert_parser = sub_parsers.add_parser("ws-convert", help="工作区: 任意文档转 PDF")
+    ws_convert_parser.set_defaults(which="ws_convert")
+    ws_convert_parser.add_argument("input_path", type=str, help="输入文件路径")
+    ws_convert_parser.add_argument("-o", "--output", type=str, required=True, help="输出 PDF 路径")
+
+    # ws-merge-images: 多张图片合成一份多页 PDF（每张一页，保持给定顺序）
+    ws_merge_images_parser = sub_parsers.add_parser("ws-merge-images", help="工作区: 多图合成 PDF")
+    ws_merge_images_parser.set_defaults(which="ws_merge_images")
+    ws_merge_images_parser.add_argument("input_path_list", type=str, nargs="+", help="图片路径列表")
+    ws_merge_images_parser.add_argument("-o", "--output", type=str, required=True, help="输出 PDF 路径")
+
     return parser
