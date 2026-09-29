@@ -1,24 +1,39 @@
 <template>
     <div class="ws">
-        <!-- 工具栏 -->
-        <div class="ws-toolbar">
+        <!--
+            顶栏：文件与文档级操作。
+            刻意只有一行、按钮用 size="small" —— 旧版把十几个控件挤在一行里，
+            在 1280 宽度下会换行成两行，白吃掉七十多像素高度。
+            页面级工具（视图模式、缩放、裁剪/遮盖）挪到画布上的浮动工具条，
+            那里离内容更近，也更符合文档类软件的习惯。
+        -->
+        <header class="ws-top">
+            <a-button size="small" @click="$emit('open-toolbox')">
+                <template #icon>
+                    <appstore-outlined />
+                </template>
+                工具箱
+            </a-button>
+
+            <span class="ws-sep"></span>
+
             <a-tooltip title="新建一份只有空白页的文档，再用「插入」把 PDF 的页面取进来">
-                <a-button :disabled="store.loading" @click="askNew">
+                <a-button size="small" :disabled="store.loading" @click="askNew">
                     <template #icon>
                         <file-add-outlined />
                     </template>
                     新建
                 </a-button>
             </a-tooltip>
-            <a-button type="primary" :loading="store.loading" @click="pickFile">
+            <a-button size="small" type="primary" :loading="store.loading" @click="pickFile">
                 <template #icon>
                     <folder-open-outlined />
                 </template>
-                打开 PDF
+                打开
             </a-button>
 
             <a-dropdown :trigger="['click']">
-                <a-button :disabled="!store.seq.length">
+                <a-button size="small" :disabled="!store.seq.length">
                     <template #icon>
                         <plus-outlined />
                     </template>
@@ -38,11 +53,11 @@
                 </template>
             </a-dropdown>
 
-            <a-divider type="vertical" />
+            <span class="ws-sep"></span>
 
             <a-tooltip :title="store.dirty ? '保存到 ' + store.mainPath : '没有未保存的更改'">
-                <a-button :type="store.dirty ? 'primary' : 'default'" :disabled="!store.seq.length || !store.mainPath"
-                    :loading="store.saving" @click="doSave">
+                <a-button size="small" :type="store.dirty ? 'primary' : 'default'"
+                    :disabled="!store.seq.length || !store.mainPath" :loading="store.saving" @click="doSave">
                     <template #icon>
                         <save-outlined />
                     </template>
@@ -50,7 +65,7 @@
                 </a-button>
             </a-tooltip>
             <a-tooltip title="导出为新的 PDF（Ctrl+Shift+S）">
-                <a-button :disabled="!store.seq.length" :loading="store.saving" @click="openExport">
+                <a-button size="small" :disabled="!store.seq.length" :loading="store.saving" @click="openExport">
                     <template #icon>
                         <export-outlined />
                     </template>
@@ -58,7 +73,7 @@
                 </a-button>
             </a-tooltip>
             <a-tooltip title="水印 / 页码 / 页眉页脚（导出时应用，不改源文件）">
-                <a-button :disabled="!store.seq.length" @click="decorVisible = true">
+                <a-button size="small" :disabled="!store.seq.length" @click="decorVisible = true">
                     <template #icon>
                         <font-size-outlined />
                     </template>
@@ -66,83 +81,96 @@
                 </a-button>
             </a-tooltip>
 
-            <a-divider type="vertical" />
+            <span class="ws-sep"></span>
 
             <a-tooltip title="撤销 (Ctrl+Z)">
-                <a-button :disabled="!store.canUndo" @click="store.undo()">
+                <a-button size="small" :disabled="!store.canUndo" @click="store.undo()">
                     <template #icon>
                         <undo-outlined />
                     </template>
                 </a-button>
             </a-tooltip>
-            <a-tooltip title="重做 (Ctrl+Y)">
-                <a-button :disabled="!store.canRedo" @click="store.redo()">
+            <a-tooltip title="重做 (Ctrl+Shift+Z)">
+                <a-button size="small" :disabled="!store.canRedo" @click="store.redo()">
                     <template #icon>
                         <redo-outlined />
                     </template>
                 </a-button>
             </a-tooltip>
-
-            <a-divider type="vertical" />
-
             <a-tooltip title="逆时针旋转 90° ([)">
-                <a-button :disabled="!canEdit" @click="store.doRotate(-90)">
+                <a-button size="small" :disabled="!canEdit" @click="store.doRotate(-90)">
                     <template #icon>
                         <rotate-left-outlined />
                     </template>
                 </a-button>
             </a-tooltip>
             <a-tooltip title="顺时针旋转 90° (])">
-                <a-button :disabled="!canEdit" @click="store.doRotate(90)">
+                <a-button size="small" :disabled="!canEdit" @click="store.doRotate(90)">
                     <template #icon>
                         <rotate-right-outlined />
                     </template>
                 </a-button>
             </a-tooltip>
             <a-tooltip title="复制所选页面 (Ctrl+D)">
-                <a-button :disabled="!canEdit" @click="store.doDuplicate()">
+                <a-button size="small" :disabled="!canEdit" @click="store.doDuplicate()">
                     <template #icon>
                         <copy-outlined />
                     </template>
                 </a-button>
             </a-tooltip>
             <a-tooltip title="删除所选页面 (Delete)">
-                <a-button danger :disabled="!canEdit" @click="store.doDelete()">
+                <a-button size="small" danger :disabled="!canEdit" @click="store.doDelete()">
                     <template #icon>
                         <delete-outlined />
                     </template>
                 </a-button>
             </a-tooltip>
 
-            <a-divider type="vertical" />
+            <span class="ws-sep"></span>
 
-            <a-button size="small" :disabled="!store.seq.length" @click="store.selectAll()">全选</a-button>
-            <a-button size="small" :disabled="!store.selected.length" @click="store.clearSelection()">取消选择</a-button>
+            <a-tooltip :title="railOpen ? '收起缩略图' : '展开缩略图'">
+                <a-button size="small" @click="railOpen = !railOpen">
+                    <template #icon>
+                        <menu-fold-outlined v-if="railOpen" />
+                        <menu-unfold-outlined v-else />
+                    </template>
+                </a-button>
+            </a-tooltip>
 
             <span class="ws-spacer"></span>
+
             <span v-if="store.title" class="ws-title" :title="store.mainPath || '尚未保存到文件'">
                 {{ store.title }}
             </span>
             <a-tag v-if="store.dirty" color="orange">未保存</a-tag>
             <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
             <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
-            <span class="ws-meta" v-if="store.seq.length">
-                {{ store.seq.length }} 页
-                <template v-if="store.selected.length"> · 已选 {{ store.selected.length }}</template>
-                <template v-if="store.sourceList.length > 1"> · {{ store.sourceList.length }} 个来源</template>
-            </span>
-        </div>
+
+            <a-tooltip title="首选项">
+                <a-button size="small" type="text" @click="$emit('open-settings')">
+                    <template #icon>
+                        <setting-outlined />
+                    </template>
+                </a-button>
+            </a-tooltip>
+        </header>
 
         <a-alert v-if="store.error" type="error" show-icon closable :message="store.error" class="ws-alert"
             @close="store.error = ''" />
 
-        <!-- 主体：左轨道 + 右画布 -->
+        <!-- 主体：左轨道（可收起） + 右画布 -->
         <div class="ws-body">
-            <ThumbRail :rows="rows" :selected="store.selected" :current="store.current" :width="store.thumbWidth"
-                @select="onSelect" @move="onMove" @need="onNeedThumbs" @ctx="onCtx" />
+            <ThumbRail v-if="railOpen" :rows="rows" :selected="store.selected" :current="store.current"
+                :width="store.thumbWidth" @select="onSelect" @move="onMove" @need="onNeedThumbs" @ctx="onCtx" />
 
-            <!-- 画布外层：工具条固定在画布上方，画布自身可滚动（放大后要能看别处） -->
+            <!-- 画布外层：浮动工具条贴在画布上方，画布自身可滚动（放大后要能看别处） -->
             <div class="ws-canvas-wrap">
+                <!--
+                    画布浮动工具条：只放"跟当前视图/页面有关"的东西，
+                    并且刻意做得能在一行放下——旧版把它和应用工具条分成两条，
+                    在 1280 宽度下这条还会换行，合计吃掉一百多像素高度。
+                    不常用的操作收进「⋯」，用不到的东西不占位置。
+                -->
                 <div class="ws-modes" ref="modesRef">
                     <a-radio-group v-model:value="mode" size="small" button-style="solid">
                         <a-radio-button value="view">浏览</a-radio-button>
@@ -166,28 +194,44 @@
                     </a-button-group>
                     <a-button size="small" :type="store.zoomMode === 'fit' ? 'primary' : 'default'"
                         @click="zoomFit">适应</a-button>
-                    <a-button size="small" @click="zoomActual" title="1 个图像像素对 1 个屏幕像素">
-                        1:1
-                    </a-button>
+                    <a-tooltip title="1 个图像像素对 1 个屏幕像素">
+                        <a-button size="small" @click="zoomActual">1:1</a-button>
+                    </a-tooltip>
 
-                    <a-select :value="store.thumbWidth" size="small" style="width: 92px" :options="thumbSizeOptions"
-                        @update:value="onThumbWidthChange" />
-                    <a-button size="small" @click="shortcutVisible = true">快捷键</a-button>
                     <template v-if="mode === 'mask'">
-                        <a-input v-model:value="maskColor" size="small" style="width: 84px" title="遮盖颜色" />
+                        <a-input v-model:value="maskColor" size="small" style="width: 82px" title="遮盖颜色" />
                         <a-input-number v-model:value="maskOpacity" size="small" :min="0.1" :max="1" :step="0.1"
-                            style="width: 74px" title="不透明度" />
+                            style="width: 72px" title="不透明度" />
                     </template>
-                    <a-button size="small" :disabled="!canEdit" @click="store.clearOpsOn()">清除操作</a-button>
-                    <a-button size="small" :disabled="!canEdit" @click="store.toggleRemoveAnnots()">
-                        {{ removeAnnotsMarked ? "取消删除批注" : "删除批注" }}
-                    </a-button>
-                    <a-button size="small" :disabled="!canEdit" @click="doExtractText">提取文本</a-button>
-                    <a-button size="small" :disabled="!canEdit" @click="doExtractImages">提取图片</a-button>
-                    <span v-if="mode !== 'view'" class="ws-modehint">
-                        {{ mode === 'crop' ? '在页面上拖拽框出要保留的区域' : '在页面上拖拽框出要遮盖的区域' }}
-                        <template v-if="store.targetIds.length > 1">（将应用到选中的 {{ store.targetIds.length }} 页）</template>
-                    </span>
+
+                    <a-select :value="store.thumbWidth" size="small" style="width: 86px" :options="thumbSizeOptions"
+                        title="缩略图大小" @update:value="onThumbWidthChange" />
+
+                    <a-dropdown :trigger="['click']">
+                        <a-tooltip title="更多">
+                            <a-button size="small">
+                                <template #icon>
+                                    <more-outlined />
+                                </template>
+                            </a-button>
+                        </a-tooltip>
+                        <template #overlay>
+                            <a-menu @click="onMoreMenu">
+                                <a-menu-item key="selectall" :disabled="!store.seq.length">全选</a-menu-item>
+                                <a-menu-item key="clearsel" :disabled="!store.selected.length">取消选择</a-menu-item>
+                                <a-menu-divider />
+                                <a-menu-item key="clearops" :disabled="!canEdit">清除裁剪 / 遮盖</a-menu-item>
+                                <a-menu-item key="rmannots" :disabled="!canEdit">
+                                    {{ removeAnnotsMarked ? "取消删除批注" : "删除批注" }}
+                                </a-menu-item>
+                                <a-menu-divider />
+                                <a-menu-item key="text" :disabled="!canEdit">提取本页文本</a-menu-item>
+                                <a-menu-item key="images" :disabled="!canEdit">提取本页图片</a-menu-item>
+                                <a-menu-divider />
+                                <a-menu-item key="shortcuts">键盘快捷键…</a-menu-item>
+                            </a-menu>
+                        </template>
+                    </a-dropdown>
                 </div>
 
                 <!-- 可滚动画布：放大后靠滚动查看其余部分。
@@ -273,8 +317,42 @@
             </div>
         </div>
 
-        <!-- 诊断条：供图是本方案的地基，把关键状态摊在界面上，出问题截图即可定位 -->
-        <div class="ws-diag">
+        <!-- 状态栏：页码 / 选择 / 缩放 / 当前模式。文档类软件的常规位置 -->
+        <footer class="ws-status">
+            <span v-if="store.seq.length">第 {{ store.currentPos + 1 }} / {{ store.seq.length }} 页</span>
+            <span v-else>就绪</span>
+            <template v-if="store.selected.length">
+                <span class="ws-dot">·</span>
+                <span>已选 {{ store.selected.length }} 页</span>
+            </template>
+            <template v-if="store.sourceList.length > 1">
+                <span class="ws-dot">·</span>
+                <span>{{ store.sourceList.length }} 个来源</span>
+            </template>
+
+            <!-- 裁剪/遮盖的即时提示放在状态栏，避免占用画布工具条 -->
+            <template v-if="mode !== 'view'">
+                <span class="ws-dot">·</span>
+                <span class="ws-status-hint">
+                    {{ mode === 'crop' ? '在页面上拖拽框出要保留的区域' : '在页面上拖拽框出要遮盖的区域' }}
+                    <template v-if="store.targetIds.length > 1">（将应用到选中的 {{ store.targetIds.length }} 页）</template>
+                </span>
+            </template>
+
+            <span class="ws-spacer"></span>
+            <span v-if="store.loading">载入中…</span>
+            <span>{{ zoomPct }}%</span>
+            <span class="ws-dot">·</span>
+            <span>{{ viewModeLabel }}</span>
+            <span class="ws-dot">·</span>
+            <span>{{ themeAttr === 'dark' ? '深色' : '亮色' }}</span>
+        </footer>
+
+        <!--
+            诊断条：默认不显示，只有跑无人值守验证（设了 PDFGURU_WS_AUTOPS）时才出现。
+            它把关键状态摊在界面上，出问题截图即可定位；但作为产品界面不该常驻。
+        -->
+        <div class="ws-diag" v-if="showDiag">
             <!-- autoops 放在最前面：它在末尾时会被窗口右边裁掉，验证时看不到输出 -->
             {{ autoLog }}
             <span v-if="jsErr" class="ws-err">JS错误: {{ jsErr }} · </span>
@@ -523,6 +601,7 @@
 import { computed, defineComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { message, Modal } from 'ant-design-vue';
 import {
+    AppstoreOutlined,
     CopyOutlined,
     DeleteOutlined,
     DownOutlined,
@@ -537,6 +616,10 @@ import {
     RotateRightOutlined,
     SaveOutlined,
     UndoOutlined,
+    MenuFoldOutlined,
+    MenuUnfoldOutlined,
+    MoreOutlined,
+    SettingOutlined,
 } from '@ant-design/icons-vue';
 import { SelectFile, SelectMultipleFiles, SelectDir, SaveFile, SetClipboard, WorkspacePageText, WorkspacePageImages } from '../../../wailsjs/go/main/App';
 import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
@@ -557,7 +640,9 @@ import { runOps } from './devops';
 import ThumbRail from './ThumbRail.vue';
 
 export default defineComponent({
+    emits: ["open-toolbox", "open-settings"],
     components: {
+        AppstoreOutlined,
         CopyOutlined,
         DeleteOutlined,
         DownOutlined,
@@ -572,6 +657,10 @@ export default defineComponent({
         RotateRightOutlined,
         SaveOutlined,
         UndoOutlined,
+        MenuFoldOutlined,
+        MenuUnfoldOutlined,
+        MoreOutlined,
+        SettingOutlined,
         ThumbRail,
     },
     setup() {
@@ -1073,6 +1162,15 @@ export default defineComponent({
         const mode = ref<'view' | 'crop' | 'mask'>('view');
         const maskColor = ref('#FFFF00');
         const maskOpacity = ref(1);
+        /** 左侧缩略图轨道是否展开（顶栏可切换，多留出画布宽度） */
+        const railOpen = ref(true);
+        /** 诊断条是否显示：只有跑无人值守验证时才开，正式使用不占地方 */
+        const showDiag = ref(false);
+
+        /** 状态栏上的视图模式文案 */
+        const viewModeLabel = computed(() =>
+            store.viewMode === 'dual' ? '双页' : store.viewMode === 'continuous' ? '连续滚动' : '单页'
+        );
         const canvasBoxRef = ref<HTMLElement | null>(null);
         const dragRect = ref<NormRect | null>(null);
         /** 正在框选的是哪一页（连续模式下要把回显画在正确的那一页上） */
@@ -1441,6 +1539,36 @@ export default defineComponent({
             ctxVisible.value = true;
         };
 
+        /**
+         * 画布工具条「更多」菜单。
+         * 这些操作以前散在工具条上占了一整行，收起来之后工具条才能在窄窗口下不换行。
+         */
+        const onMoreMenu = ({ key }: { key: string }) => {
+            switch (key) {
+                case 'selectall':
+                    store.selectAll();
+                    break;
+                case 'clearsel':
+                    store.clearSelection();
+                    break;
+                case 'clearops':
+                    store.clearOpsOn();
+                    break;
+                case 'rmannots':
+                    store.toggleRemoveAnnots();
+                    break;
+                case 'text':
+                    void doExtractText();
+                    break;
+                case 'images':
+                    void doExtractImages();
+                    break;
+                case 'shortcuts':
+                    shortcutVisible.value = true;
+                    break;
+            }
+        };
+
         const onCtxAction = ({ key }: { key: string }) => {
             ctxVisible.value = false;
             switch (key) {
@@ -1695,6 +1823,8 @@ export default defineComponent({
             // 无人值守验证钩子：自动打开文档并执行一段操作脚本
             try {
                 const auto = await store.autoOpenPath();
+            // 设了验证钩子才显示诊断条：正式使用时它不该占地方
+            showDiag.value = !!auto;
                 if (auto) {
                     await store.open(auto);
                     const script = await store.autoOps();
@@ -1759,6 +1889,10 @@ export default defineComponent({
             onCanvasScroll,
             drawTargetId,
             contDbg,
+            railOpen,
+            showDiag,
+            viewModeLabel,
+            onMoreMenu,
             // 缩放
             zoomPct,
             zoomBy,
@@ -1846,24 +1980,62 @@ export default defineComponent({
 .ws {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 120px);
-    margin-right: 2vw;
+    /* 工作区现在是整屏的，必须真正占满：
+       旧版写的是 calc(100vh - 120px) 再配 margin-right: 2vw —— 那个"120px"
+       是按早已改掉的头部估的，结果窗口底部白空出一百多像素、右边还留一条缝。 */
+    height: 100%;
+    min-height: 0;
+    background: var(--ws-bg);
 }
 
-.ws-toolbar {
+/* 顶栏：只有一行，不换行 */
+.ws-top {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 0 10px;
+    height: 46px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--ws-border);
+    background: var(--ws-bg);
+    overflow: hidden;
+}
+
+/* 分组之间的细竖线 */
+.ws-sep {
+    width: 1px;
+    height: 20px;
+    background: var(--ws-border);
+    margin: 0 4px;
+    flex: 0 0 auto;
 }
 
 .ws-spacer {
     flex: 1;
 }
 
-.ws-meta {
-    color: var(--ws-text-sub);
-    font-size: 13px;
+/* 底部状态栏 */
+.ws-status {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 12px;
+    font-size: 12px;
+    color: var(--ws-text-dim);
+    border-top: 1px solid var(--ws-border);
+    background: var(--ws-bg);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.ws-dot {
+    color: var(--ws-text-faint);
+}
+
+.ws-status-hint {
+    color: var(--ws-accent);
 }
 
 .ws-title {

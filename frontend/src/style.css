@@ -1,8 +1,22 @@
+/*
+ * 应用外壳。
+ *
+ * 全高布局是这里的关键：原先用 AntD 的 a-row/a-col 栅格，它只按内容高度排布、
+ * 不会撑满窗口，结果窗口底部白白空掉一百多像素（实测 1280x700 时约 115px）。
+ * 现在 html/body/#app 一路 height:100% 且不滚动，由内部各区域自己决定谁滚动。
+ */
+html,
+body,
+#app {
+    height: 100%;
+}
+
 html {
     background-color: var(--ws-shell-bg);
     text-align: left;
     color: var(--ws-shell-text);
-    overflow: auto;
+    /* 滚动交给内部区域，页面本身不滚 */
+    overflow: hidden;
 }
 
 body {
@@ -11,7 +25,7 @@ body {
     font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
         "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
         sans-serif;
-    overflow: auto;
+    overflow: hidden;
 }
 
 @font-face {
@@ -23,7 +37,6 @@ body {
 }
 
 #app {
-    height: 100vh;
     text-align: left;
-    overflow: auto;
+    overflow: hidden;
 }

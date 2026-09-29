@@ -1,246 +1,221 @@
 <template>
-    <a-row>
-        <a-col :span="4">
-            <a-menu v-model:selectedKeys="store.selectedKeys" :open-keys="store.openKeys" style="width: 180px"
-                @openChange="store.onOpenChange" mode="inline">
-                <a-menu-item key="workspace">
-                    <template #icon>
-                        <profile-outlined />
-                    </template>
-                    {{ menuRecord['workspace'] }}
-                </a-menu-item>
-                <a-menu-item key="index">
-                    <template #icon>
-                        <home-outlined />
-                    </template>
-                    {{ menuRecord['index'] }}
-                </a-menu-item>
-                <a-sub-menu key="page_edit">
-                    <template #title>页面编辑</template>
-                    <template #icon>
-                        <form-outlined />
-                    </template>
-                    <a-menu-item key="insert">
+    <!-- 工作区是整屏编辑器：它自带顶栏 / 左栏 / 状态栏，这里不再套任何外层框架 -->
+    <Workspace v-if="isWorkspace" @open-toolbox="go('index')" @open-settings="go('settings')" />
+
+    <!-- 工具箱：独立页面。顶栏 + 左侧功能列表 + 内容区，三段各自滚动 -->
+    <div v-else class="tool-shell">
+        <header class="tool-top">
+            <a-button size="small" @click="go('workspace')">
+                <template #icon>
+                    <arrow-left-outlined />
+                </template>
+                返回工作区
+            </a-button>
+            <span class="tool-title">{{ title }}</span>
+            <span class="tool-desc">{{ desc }}</span>
+        </header>
+        <div class="tool-body">
+            <nav class="tool-nav">
+                <a-menu v-model:selectedKeys="store.selectedKeys" :open-keys="store.openKeys"
+                    @openChange="store.onOpenChange" mode="inline">
+                    <a-menu-item key="workspace">
                         <template #icon>
-                            <login-outlined />
+                            <profile-outlined />
                         </template>
-                        {{ menuRecord['insert'] }}
+                        {{ menuRecord['workspace'] }}
                     </a-menu-item>
-                    <a-menu-item key="merge">
+                    <a-menu-item key="index">
                         <template #icon>
-                            <merge-cells-outlined />
+                            <home-outlined />
                         </template>
-                        {{ menuRecord['merge'] }}
+                        {{ menuRecord['index'] }}
                     </a-menu-item>
-                    <a-menu-item key="split">
+                    <a-sub-menu key="page_edit">
+                        <template #title>页面编辑</template>
                         <template #icon>
-                            <split-cells-outlined />
+                            <form-outlined />
                         </template>
-                        {{ menuRecord['split'] }}
+                        <a-menu-item key="insert">
+                            <template #icon>
+                                <login-outlined />
+                            </template>
+                            {{ menuRecord['insert'] }}
+                        </a-menu-item>
+                        <a-menu-item key="merge">
+                            <template #icon>
+                                <merge-cells-outlined />
+                            </template>
+                            {{ menuRecord['merge'] }}
+                        </a-menu-item>
+                        <a-menu-item key="split">
+                            <template #icon>
+                                <split-cells-outlined />
+                            </template>
+                            {{ menuRecord['split'] }}
+                        </a-menu-item>
+                        <a-menu-item key="rotate">
+                            <template #icon>
+                                <rotate-right-outlined />
+                            </template>
+                            {{ menuRecord['rotate'] }}
+                        </a-menu-item>
+                        <a-menu-item key="delete">
+                            <template #icon>
+                                <delete-outlined />
+                            </template>
+                            {{ menuRecord['delete'] }}
+                        </a-menu-item>
+                        <a-menu-item key="reorder">
+                            <template #icon>
+                                <ordered-list-outlined />
+                            </template>
+                            {{ menuRecord['reorder'] }}
+                        </a-menu-item>
+                        <a-menu-item key="crop">
+                            <template #icon>
+                                <scissor-outlined />
+                            </template>
+                            {{ menuRecord['crop'] }}
+                        </a-menu-item>
+                        <a-menu-item key="scale">
+                            <template #icon>
+                                <fullscreen-outlined />
+                            </template>
+                            {{ menuRecord['scale'] }}
+                        </a-menu-item>
+                        <a-menu-item key="cut">
+                            <template #icon>
+                                <borderless-table-outlined />
+                            </template>
+                            {{ menuRecord['cut'] }}
+                        </a-menu-item>
+                        <a-menu-item key="header">
+                            <template #icon>
+                                <credit-card-outlined />
+                            </template>
+                            {{ menuRecord['header'] }}
+                        </a-menu-item>
+                        <a-menu-item key="page_number">
+                            <template #icon>
+                                <field-binary-outlined />
+                            </template>
+                            {{ menuRecord['page_number'] }}
+                        </a-menu-item>
+                        <a-menu-item key="background">
+                            <template #icon>
+                                <bg-colors-outlined />
+                            </template>
+                            {{ menuRecord['background'] }}
+                        </a-menu-item>
+                        <a-menu-item key="annot">
+                            <template #icon>
+                                <message-outlined />
+                            </template>
+                            {{ menuRecord['annot'] }}
+                        </a-menu-item>
+                    </a-sub-menu>
+                    <a-sub-menu key="protect">
+                        <template #title>保护</template>
+                        <template #icon>
+                            <safety-certificate-outlined />
+                        </template>
+                        <a-menu-item key="watermark">
+                            <template #icon>
+                                <highlight-outlined />
+                            </template>
+                            {{ menuRecord['watermark'] }}
+                        </a-menu-item>
+                        <a-menu-item key="encrypt">
+                            <template #icon>
+                                <lock-outlined />
+                            </template>
+                            {{ menuRecord['encrypt'] }}
+                        </a-menu-item>
+                        <a-menu-item key="sign">
+                            <template #icon>
+                                <edit-outlined />
+                            </template>
+                            {{ menuRecord['sign'] }}
+                        </a-menu-item>
+                    </a-sub-menu>
+                    <a-sub-menu key="other">
+                        <template #title>其他</template>
+                        <template #icon>
+                            <appstore-outlined />
+                        </template>
+                        <a-menu-item key="bookmark">
+                            <template #icon>
+                                <book-outlined />
+                            </template>
+                            {{ menuRecord['bookmark'] }}
+                        </a-menu-item>
+                        <a-menu-item key="extract">
+                            <template #icon>
+                                <aim-outlined />
+                            </template>
+                            {{ menuRecord['extract'] }}
+                        </a-menu-item>
+                        <a-menu-item key="compress">
+                            <template #icon>
+                                <file-zip-outlined />
+                            </template>
+                            {{ menuRecord['compress'] }}
+                        </a-menu-item>
+                        <a-menu-item key="convert">
+                            <template #icon>
+                                <sync-outlined />
+                            </template>
+                            {{ menuRecord['convert'] }}
+                        </a-menu-item>
+                        <a-menu-item key="dual">
+                            <template #icon>
+                                <file-search-outlined />
+                            </template>
+                            {{ menuRecord['dual'] }}
+                        </a-menu-item>
+                    </a-sub-menu>
+                    <a-menu-item key="settings">
+                        <template #icon>
+                            <SettingOutlined />
+                        </template>
+                        {{ menuRecord['settings'] }}
                     </a-menu-item>
-                    <a-menu-item key="rotate">
-                        <template #icon>
-                            <rotate-right-outlined />
-                        </template>
-                        {{ menuRecord['rotate'] }}
-                    </a-menu-item>
-                    <a-menu-item key="delete">
-                        <template #icon>
-                            <delete-outlined />
-                        </template>
-                        {{ menuRecord['delete'] }}
-                    </a-menu-item>
-                    <a-menu-item key="reorder">
-                        <template #icon>
-                            <ordered-list-outlined />
-                        </template>
-                        {{ menuRecord['reorder'] }}
-                    </a-menu-item>
-                    <a-menu-item key="crop">
-                        <template #icon>
-                            <scissor-outlined />
-                        </template>
-                        {{ menuRecord['crop'] }}
-                    </a-menu-item>
-                    <a-menu-item key="scale">
-                        <template #icon>
-                            <fullscreen-outlined />
-                        </template>
-                        {{ menuRecord['scale'] }}
-                    </a-menu-item>
-                    <a-menu-item key="cut">
-                        <template #icon>
-                            <borderless-table-outlined />
-                        </template>
-                        {{ menuRecord['cut'] }}
-                    </a-menu-item>
-                    <a-menu-item key="header">
-                        <template #icon>
-                            <credit-card-outlined />
-                        </template>
-                        {{ menuRecord['header'] }}
-                    </a-menu-item>
-                    <a-menu-item key="page_number">
-                        <template #icon>
-                            <field-binary-outlined />
-                        </template>
-                        {{ menuRecord['page_number'] }}
-                    </a-menu-item>
-                    <a-menu-item key="background">
-                        <template #icon>
-                            <bg-colors-outlined />
-                        </template>
-                        {{ menuRecord['background'] }}
-                    </a-menu-item>
-                    <a-menu-item key="annot">
-                        <template #icon>
-                            <message-outlined />
-                        </template>
-                        {{ menuRecord['annot'] }}
-                    </a-menu-item>
-                </a-sub-menu>
-                <a-sub-menu key="protect">
-                    <template #title>保护</template>
-                    <template #icon>
-                        <safety-certificate-outlined />
-                    </template>
-                    <a-menu-item key="watermark">
-                        <template #icon>
-                            <highlight-outlined />
-                        </template>
-                        {{ menuRecord['watermark'] }}
-                    </a-menu-item>
-                    <a-menu-item key="encrypt">
-                        <template #icon>
-                            <lock-outlined />
-                        </template>
-                        {{ menuRecord['encrypt'] }}
-                    </a-menu-item>
-                    <a-menu-item key="sign">
-                        <template #icon>
-                            <edit-outlined />
-                        </template>
-                        {{ menuRecord['sign'] }}
-                    </a-menu-item>
-                </a-sub-menu>
-                <a-sub-menu key="other">
-                    <template #title>其他</template>
-                    <template #icon>
-                        <appstore-outlined />
-                    </template>
-                    <!-- <a-menu-item key="meta">
-                        <template #icon>
-                            <info-circle-outlined />
-                        </template>
-                        {{ menuRecord['meta'] }}
-                    </a-menu-item> -->
-                    <a-menu-item key="bookmark">
-                        <template #icon>
-                            <book-outlined />
-                        </template>
-                        {{ menuRecord['bookmark'] }}
-                    </a-menu-item>
-                    <a-menu-item key="extract">
-                        <template #icon>
-                            <aim-outlined />
-                        </template>
-                        {{ menuRecord['extract'] }}
-                    </a-menu-item>
-                    <a-menu-item key="compress">
-                        <template #icon>
-                            <file-zip-outlined />
-                        </template>
-                        {{ menuRecord['compress'] }}
-                    </a-menu-item>
-                    <a-menu-item key="convert">
-                        <template #icon>
-                            <sync-outlined />
-                        </template>
-                        {{ menuRecord['convert'] }}
-                    </a-menu-item>
-                    <!-- OCR 依赖未随项目提供（见 thirdparty/requirements.txt），暂时隐藏入口 -->
-                    <!-- <a-menu-item key="ocr">
-                        <template #icon>
-                            <eye-outlined />
-                        </template>
-                        {{ menuRecord['ocr'] }}
-                    </a-menu-item> -->
-                    <!-- <a-menu-item key="crack">
-                        <template #icon>
-                            <tool-outlined />
-                        </template>
-                        {{ menuRecord['crack'] }}
-                    </a-menu-item> -->
-                    <a-menu-item key="dual">
-                        <template #icon>
-                            <file-search-outlined />
-                        </template>
-                        {{ menuRecord['dual'] }}
-                    </a-menu-item>
-                </a-sub-menu>
-                <a-menu-item key="settings">
-                    <template #icon>
-                        <SettingOutlined />
-                    </template>
-                    {{ menuRecord['settings'] }}
-                </a-menu-item>
-                <!-- <a-menu-item key="debug">
-                    <template #icon>
-                        <SettingOutlined />
-                    </template>
-                    {{ menuRecord['debug'] }}
-                </a-menu-item> -->
-            </a-menu>
-        </a-col>
-        <a-col :span="20">
-            <div>
-                <!-- 工作区是整屏编辑器，不占用标题区 -->
-                <div style="margin-right: 5vw;margin-top: 0.5em;" v-if="store.selectedKeys.at(0) === 'index'">
-                    <a-typography-title>工具箱</a-typography-title>
-                </div>
-                <div style="margin-right: 5vw;margin-top: 0.5em;"
-                    v-else-if="store.selectedKeys.at(0) !== 'workspace'">
-                    <a-typography-title>{{ menuRecord[store.selectedKeys.at(0) || "merge"] }}</a-typography-title>
-                    <a-typography-paragraph>
-                        <blockquote>功能说明：{{ menuDesc[store.selectedKeys.at(0) || "merge"] }}</blockquote>
-                    </a-typography-paragraph>
-                </div>
-                <div>
-                    <Workspace v-if="store.selectedKeys.at(0) === 'workspace'" />
-                    <Index v-if="store.selectedKeys.at(0) === 'index'" />
-                    <MergeForm v-if="store.selectedKeys.at(0) === 'merge'" />
-                    <SplitForm v-if="store.selectedKeys.at(0) === 'split'" />
-                    <DeleteForm v-if="store.selectedKeys.at(0) === 'delete'" />
-                    <ReorderForm v-if="store.selectedKeys.at(0) === 'reorder'" />
-                    <InsertForm v-if="store.selectedKeys.at(0) === 'insert'" />
-                    <BookmarkForm v-if="store.selectedKeys.at(0) === 'bookmark'" />
-                    <ScaleForm v-if="store.selectedKeys.at(0) === 'scale'" />
-                    <WatermarkForm v-if="store.selectedKeys.at(0) === 'watermark'" />
-                    <RotateForm v-if="store.selectedKeys.at(0) === 'rotate'" />
-                    <CropForm v-if="store.selectedKeys.at(0) === 'crop'" />
-                    <CutForm v-if="store.selectedKeys.at(0) === 'cut'" />
-                    <ExtractForm v-if="store.selectedKeys.at(0) === 'extract'" />
-                    <CompressForm v-if="store.selectedKeys.at(0) === 'compress'" />
-                    <ConvertForm v-if="store.selectedKeys.at(0) === 'convert'" />
-                    <EncryptForm v-if="store.selectedKeys.at(0) === 'encrypt'" />
-                    <OcrForm v-if="store.selectedKeys.at(0) === 'ocr'" />
-                    <PreferencesForm v-if="store.selectedKeys.at(0) === 'settings'" />
-                    <HeaderAndFooterForm v-if="store.selectedKeys.at(0) === 'header'" />
-                    <PageNumberForm v-if="store.selectedKeys.at(0) === 'page_number'" />
-                    <BackgroundForm v-if="store.selectedKeys.at(0) === 'background'" />
-                    <MetaForm v-if="store.selectedKeys.at(0) === 'meta'" />
-                    <DualLayerForm v-if="store.selectedKeys.at(0) === 'dual'" />
-                    <PasswordCrackForm v-if="store.selectedKeys.at(0) === 'crack'" />
-                    <SignForm v-if="store.selectedKeys.at(0) === 'sign'" />
-                    <AnnotForm v-if="store.selectedKeys.at(0) === 'annot'" />
-                    <Debug v-if="store.selectedKeys.at(0) === 'debug'" />
-                </div>
-            </div>
-        </a-col>
-    </a-row>
+                </a-menu>
+            </nav>
+            <main class="tool-main">
+                <Index v-if="key === 'index'" />
+                <MergeForm v-if="key === 'merge'" />
+                <SplitForm v-if="key === 'split'" />
+                <DeleteForm v-if="key === 'delete'" />
+                <ReorderForm v-if="key === 'reorder'" />
+                <InsertForm v-if="key === 'insert'" />
+                <BookmarkForm v-if="key === 'bookmark'" />
+                <ScaleForm v-if="key === 'scale'" />
+                <WatermarkForm v-if="key === 'watermark'" />
+                <RotateForm v-if="key === 'rotate'" />
+                <CropForm v-if="key === 'crop'" />
+                <CutForm v-if="key === 'cut'" />
+                <ExtractForm v-if="key === 'extract'" />
+                <CompressForm v-if="key === 'compress'" />
+                <ConvertForm v-if="key === 'convert'" />
+                <EncryptForm v-if="key === 'encrypt'" />
+                <OcrForm v-if="key === 'ocr'" />
+                <PreferencesForm v-if="key === 'settings'" />
+                <HeaderAndFooterForm v-if="key === 'header'" />
+                <PageNumberForm v-if="key === 'page_number'" />
+                <BackgroundForm v-if="key === 'background'" />
+                <MetaForm v-if="key === 'meta'" />
+                <DualLayerForm v-if="key === 'dual'" />
+                <PasswordCrackForm v-if="key === 'crack'" />
+                <SignForm v-if="key === 'sign'" />
+                <AnnotForm v-if="key === 'annot'" />
+                <Debug v-if="key === 'debug'" />
+            </main>
+        </div>
+    </div>
 </template>
 <script lang="ts">
-import { defineComponent, reactive, watch, ref } from 'vue';
+import { computed, defineComponent } from 'vue';
 import {
     MinusCircleOutlined,
     PlusOutlined,
@@ -284,6 +259,7 @@ import {
     StarOutlined,
     MessageOutlined,
     ProfileOutlined,
+    ArrowLeftOutlined,
     createFromIconfontCN,
 } from '@ant-design/icons-vue';
 
@@ -364,6 +340,8 @@ export default defineComponent({
         EditOutlined,
         StarOutlined,
         MessageOutlined,
+        ProfileOutlined,
+        ArrowLeftOutlined,
         IconFont,
         // form
         // 合并
@@ -425,11 +403,80 @@ export default defineComponent({
     },
     setup() {
         const store = useMenuState();
+        const key = computed(() => String(store.selectedKeys.at(0) ?? 'workspace'));
+        const isWorkspace = computed(() => key.value === 'workspace');
+        const title = computed(() => menuRecord[key.value] || '工具箱');
+        const desc = computed(() => (key.value === 'index' ? '' : menuDesc[key.value] || ''));
+        /** 切换视图（工作区 <-> 工具箱） */
+        const go = (k: string) => {
+            store.selectedKeys = [k];
+        };
         return {
             menuRecord,
             menuDesc,
             store,
+            key,
+            isWorkspace,
+            title,
+            desc,
+            go,
         };
     },
 });
 </script>
+
+<style scoped>
+/* 工具箱：整屏三段式，各段自己滚动，整页不滚 */
+.tool-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--ws-bg);
+}
+
+.tool-top {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 46px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--ws-border);
+}
+
+.tool-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ws-text);
+}
+
+.tool-desc {
+    font-size: 12px;
+    color: var(--ws-text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+}
+
+.tool-nav {
+    flex: 0 0 auto;
+    width: 186px;
+    overflow: auto;
+    padding-top: 6px;
+    border-right: 1px solid var(--ws-border);
+    background: var(--ws-bg-subtle);
+}
+
+.tool-main {
+    flex: 1;
+    min-width: 0;
+    overflow: auto;
+    padding: 14px 10px 24px 16px;
+}
+</style>
