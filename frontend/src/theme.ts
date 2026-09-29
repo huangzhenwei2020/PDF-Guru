@@ -12,7 +12,12 @@
  *    只需在 <html> 上切 data-theme，不需要重建 DOM。
  */
 
+import { ref } from "vue";
+
 export type ThemeMode = "light" | "dark";
+
+/** 当前主题（响应式）。诊断条要显示它——直接读 document 属性是读不出变化的。 */
+export const themeMode = ref<ThemeMode>("light");
 
 const STORAGE_KEY = "pdfguru-theme";
 const STYLE_ID = "antd-dark-theme";
@@ -51,6 +56,7 @@ function removeDarkStyle() {
 export function applyThemeVars(mode: ThemeMode) {
     current = mode;
     document.documentElement.dataset.theme = mode;
+    themeMode.value = mode;
 }
 
 export function applyTheme(mode: ThemeMode): Promise<void> {

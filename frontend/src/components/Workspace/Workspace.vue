@@ -541,6 +541,7 @@ import {
 import { SelectFile, SelectMultipleFiles, SelectDir, SaveFile, SetClipboard, WorkspacePageText, WorkspacePageImages } from '../../../wailsjs/go/main/App';
 import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
 import { installDropFix } from '../../dropfix';
+import { themeMode } from '../../theme';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
@@ -1046,8 +1047,9 @@ export default defineComponent({
             }
         };
         const onThumbWidthChange = (v: any) => store.setThumbWidth(v);
-        /** 诊断用：模板里不能直接引用 document，这里包一层 */
-        const themeAttr = computed(() => document.documentElement.dataset.theme || 'light');
+        /** 诊断用：直接用 theme.ts 里的响应式状态——
+         * 读 document.documentElement.dataset 是读不出变化的，诊断条会一直显示旧值。 */
+        const themeAttr = themeMode;
 
         const shortcutVisible = ref(false);
         const shortcuts: [string, string][] = [

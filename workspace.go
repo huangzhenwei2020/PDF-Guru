@@ -555,6 +555,32 @@ func (a *App) WorkspaceSetDirty(dirty bool) {
 	wsMu.Unlock()
 }
 
+// wsCloseDialogButtons 是关闭确认框上两个按钮的文案。
+// 注意：**Windows 上 Wails 会忽略这个文案**（它固定用 MB_YESNO，显示"是/否"），
+// macOS / Linux 才会照用。返回值同样分两套，见 shouldBlockClose。
+const (
+	wsCloseDiscard = "放弃更改并关闭"
+	wsCloseCancel  = "取消"
+)
+
+// shouldBlockClose 判断"用户在关闭确认框里的选择"是否应当阻止关闭。
+//
+// 这里必须同时认两种返回值，否则就会出现"两个按钮都关不掉窗口"：
+//   - Windows：Wails 用 MB_YESNO，忽略自定义标签，返回 "Yes" / "No"
+//   - macOS / Linux：返回的是我们传入的按钮文案
+//
+// 这个坑很隐蔽——**两个分支都返回 true，窗口永远关不掉**，
+// 而且关闭窗口这个动作没法用脚本自动点，只能靠人肉发现。
+func shouldBlockClose(choice string) bool {
+	if strings.EqualFold(strings.TrimSpace(choice), wsCloseDiscard) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(choice), "Yes") {
+		return false
+	}
+	return true
+}
+
 // onBeforeClose 在用户点关闭时被 Wails 调用。
 // 返回 true 表示阻止关闭。有未保存更改时弹原生确认框——
 // 用原生对话框而不是页面内弹窗，是因为此时窗口正要关闭，页面内弹窗可能来不及响应用户。
@@ -567,19 +593,20 @@ func (a *App) onBeforeClose(ctx context.Context) bool {
 		return false
 	}
 
-	const abandon = "放弃更改并关闭"
-	const cancel = "取消"
 	choice, err := wails_runtime.MessageDialog(ctx, wails_runtime.MessageDialogOptions{
-		Type:          wails_runtime.QuestionDialog,
-		Title:         "有未保存的更改",
-		Message:       "工作区里还有未保存的更改。关闭后这些改动会丢失。",
-		Buttons:       []string{abandon, cancel},
-		DefaultButton: cancel,
-		CancelButton:  cancel,
+		Type:    wails_runtime.QuestionDialog,
+		Title:   "有未保存的更改",
+		Message: "工作区里还有未保存的更改，关闭后这些改动会丢失。\n\n「是」/「放弃更改并关闭」= 直接关闭\n「否」/「取消」= 返回工作区",
+		// Windows 下这两项只用于决定默认落在哪个按钮上（DefaultButton 认 "No" 才生效）
+		Buttons:       []string{wsCloseDiscard, wsCloseCancel},
+		DefaultButton: "No",
+		CancelButton:  "No",
 	})
 	if err != nil {
 		logger.Errorln("关闭确认框失败:", err)
+		// 弹不出来时宁可放行，否则用户就再也关不掉窗口了
 		return false
 	}
-	return choice != abandon
+	logger.Printf("关闭确认：choice=%q\n", choice)
+	return shouldBlockClose(choice)
 }
