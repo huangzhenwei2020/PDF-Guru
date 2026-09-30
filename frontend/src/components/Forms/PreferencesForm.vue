@@ -1,17 +1,10 @@
 <template>
     <div>
-        <!-- 外观：全局设置，放在最前面 -->
-        <a-form style="border: 1px solid var(--ws-border-strong); padding: 10px 0;border-radius: 10px;margin-right: 5vw;"
-            :label-col="{ span: 3 }" :wrapper-col="{ offset: 1, span: 18 }">
-            <a-form-item label="外观">
-                <a-radio-group v-model:value="themeMode" button-style="solid" @change="onThemeChange">
-                    <a-radio-button value="light">亮色</a-radio-button>
-                    <a-radio-button value="dark">深色</a-radio-button>
-                </a-radio-group>
-                <span class="theme-hint">切换立即生效，选择会被记住</span>
-            </a-form-item>
-        </a-form>
-
+        <!--
+            外观（亮色/深色）已经移到工作区顶部栏——那是用户天天看的地方，
+            放在这里要专门进「首选项」才找得到。
+            GitHub / 作者 / Gitee / B站 这些关于信息也一并去掉了。
+        -->
         <a-form ref="formRef" style="border: 1px solid var(--ws-border-strong); padding: 10px 0;border-radius: 10px;margin-right: 5vw;margin-top: 12px;"
             :model="formState" :label-col="{ span: 3 }" :wrapper-col="{ offset: 1, span: 18 }" :rules="rules"
             @finish="onFinish" @finishFailed="onFinishFailed">
@@ -92,48 +85,12 @@
                 </a-button>
             </a-form-item>
         </a-form>
-        <div>
-            <a-form :label-col="{ span: 2 }" :wrapper-col="{ offset: 0, span: 18 }" style="margin-top: 20px;">
-                <a-form-item label="Github地址">
-                    <a-button type="link" @click="OpenUrl('https://github.com/kevin2li/PDF-Guru')">
-                        <github-outlined />
-                        https://github.com/kevin2li/PDF-Guru
-                    </a-button>
-                </a-form-item>
-                <a-form-item label="作者" style="margin-top: -20px;">
-                    <a-button type="link" @click="OpenUrl('https://github.com/kevin2li')">
-                        <user-outlined />
-                        Kevin2li
-                    </a-button>
-                </a-form-item>
-                <a-form-item label="Gitee地址" style="margin-top: -20px;">
-                    <a-button type="link" @click="OpenUrl('https://gitee.com/Kevin234/PDF-Guru')">
-                        https://gitee.com/Kevin234/PDF-Guru
-                    </a-button>
-                </a-form-item>
-                <a-form-item label="B站" style="margin-top: -20px;">
-                    <a-button type="link" @click="OpenUrl('https://space.bilibili.com/369356107')">
-                        https://space.bilibili.com/369356107
-                    </a-button>
-                </a-form-item>
-            </a-form>
-        </div>
-        <a-divider></a-divider>
-        <div>
-        </div>
-        <!-- <a-space>  
-            <a-button @click="selectFile" type="primary">测试选择文件</a-button>
-            <a-button @click="selectMultipleFiles" type="primary">测试选择多文件</a-button>
-            <a-button @click="selectDir" type="primary">测试选择目录</a-button>
-        </a-space> -->
-        <!-- <b>相关资源下载：</b>
-        <div style="margin-top: 1vh;">
-            <a-space direction="vertical">
-                <div>1. Python: </div>
-                <div>2. tesseract ocr: </div>
-                <div>3. Pandoc: </div>
-            </a-space>
-        </div> -->
+        <!--
+            这里原本是「Github地址 / 作者 / Gitee地址 / B站」四个外链按钮。
+            按用户要求整块去掉了：那是对上游作者的署名信息，放在我们自己的
+            软件里既没用也容易让人误会。相关代码（OpenUrl 的引用与图标导入）也已清理。
+            下面那段注释掉的"测试选择文件/下载资源"死代码也一并删掉，免得越堆越乱。
+        -->
     </div>
 </template>
 <script lang="ts">
@@ -147,25 +104,18 @@ import {
     SaveFile,
     SelectDir,
     SelectMultipleFiles,
-    OpenUrl,
     GetClipboard,
 } from '../../../wailsjs/go/main/App';
 import type { FormInstance } from 'ant-design-vue';
 import type { Rule } from 'ant-design-vue/es/form';
-import { EllipsisOutlined, GithubOutlined, UserOutlined } from '@ant-design/icons-vue';
+import { EllipsisOutlined } from '@ant-design/icons-vue';
 import type { PreferencesState } from "../data";
-import { getTheme, setTheme, type ThemeMode } from "../../theme";
 export default defineComponent({
     components: {
-        EllipsisOutlined,
-        GithubOutlined,
-        UserOutlined
+        EllipsisOutlined
     },
     setup() {
         const formRef = ref<FormInstance>();
-        // 外观设置：切换即生效并被记住（见 src/theme.ts）
-        const themeMode = ref<ThemeMode>(getTheme());
-        const onThemeChange = () => setTheme(themeMode.value);
         const formState = reactive<PreferencesState>({
             pdf_path: "",
             python_path: "",
@@ -346,8 +296,6 @@ export default defineComponent({
         }
         return {
             formState,
-            themeMode,
-            onThemeChange,
             rules,
             formRef,
             validateStatus,
@@ -361,7 +309,6 @@ export default defineComponent({
             saveFile,
             selectMultipleFiles,
             selectDir,
-            OpenUrl,
         };
     }
 })

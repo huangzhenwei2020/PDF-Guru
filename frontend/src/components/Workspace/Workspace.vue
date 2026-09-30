@@ -152,6 +152,19 @@
             <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
             <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
 
+            <!--
+                主题切换放在工作区顶部栏：这是天天要用的开关，
+                之前藏在「首选项」里，得专门进去才找得到。
+            -->
+            <a-tooltip :title="themeAttr === 'dark' ? '切换到亮色' : '切换到深色'">
+                <a-button size="small" type="text" class="ws-theme-btn" @click="toggleTheme">
+                    <template #icon>
+                        <bulb-filled v-if="themeAttr === 'dark'" />
+                        <bulb-outlined v-else />
+                    </template>
+                </a-button>
+            </a-tooltip>
+
             <a-tooltip title="首选项">
                 <a-button size="small" type="text" @click="$emit('open-settings')">
                     <template #icon>
@@ -662,6 +675,8 @@ import {
     MenuUnfoldOutlined,
     MoreOutlined,
     SettingOutlined,
+    BulbOutlined,
+    BulbFilled,
 } from '@ant-design/icons-vue';
 import {
     SelectDir,
@@ -677,7 +692,7 @@ import {
 } from '../../../wailsjs/go/main/App';
 import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
 import { installDropFix } from '../../dropfix';
-import { themeMode } from '../../theme';
+import { themeMode, setTheme } from '../../theme';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
 import {
     clampRect,
@@ -714,6 +729,8 @@ export default defineComponent({
         MenuUnfoldOutlined,
         MoreOutlined,
         SettingOutlined,
+        BulbOutlined,
+        BulbFilled,
         ThumbRail,
     },
     setup() {
@@ -1252,6 +1269,11 @@ export default defineComponent({
         /** 诊断用：直接用 theme.ts 里的响应式状态——
          * 读 document.documentElement.dataset 是读不出变化的，诊断条会一直显示旧值。 */
         const themeAttr = themeMode;
+
+        /** 顶部栏的主题开关：亮色 <-> 深色，选择会被记住（见 src/theme.ts）。 */
+        const toggleTheme = () => {
+            setTheme(themeAttr.value === 'dark' ? 'light' : 'dark');
+        };
 
         const shortcutVisible = ref(false);
         const shortcuts: [string, string][] = [
@@ -2177,8 +2199,11 @@ export default defineComponent({
                                         `img=${r2(row.querySelector('img'))}`
                                     );
                                 });
-                                out.push('画布 DOM 实测 (pv-fit / pv-box / img):');
-                                root?.querySelectorAll('.pv-fit').forEach((fit, i) => {
+                                const themeBtn = document.querySelector('.ws-theme-btn') as HTMLElement | null;
+                                out.push(
+                                    `主题按钮: ${r2(themeBtn)} 当前=${themeAttr.value}`
+                                );
+                                out.push('画布 DOM 实测 (pv-fit / pv-box / img):');                                root?.querySelectorAll('.pv-fit').forEach((fit, i) => {
                                     out.push(
                                         `  #${i} fit=${r2(fit)} box=${r2(fit.querySelector('.pv-box'))} ` +
                                         `img=${r2(fit.querySelector('img'))}`
@@ -2289,6 +2314,7 @@ export default defineComponent({
             autoLog,
             jsErr,
             themeAttr,
+            toggleTheme,
             // 插入相关
             blankVisible,
             blankPaper,
