@@ -55,16 +55,21 @@
 
             <span class="ws-sep"></span>
 
-            <a-tooltip :title="store.dirty ? '保存到 ' + store.mainPath : '没有未保存的更改'">
+            <a-tooltip :title="store.mainPath ? '保存到 ' + store.mainPath : '还没有文件，将提示选择保存位置'">
                 <a-button size="small" :type="store.dirty ? 'primary' : 'default'"
-                    :disabled="!store.seq.length || !store.mainPath" :loading="store.saving" @click="doSave">
+                    :disabled="!store.seq.length" :loading="store.saving" @click="doSave">
                     <template #icon>
                         <save-outlined />
                     </template>
                     保存
                 </a-button>
             </a-tooltip>
-            <a-tooltip title="导出为新的 PDF（Ctrl+Shift+S）">
+            <a-tooltip title="另存为：选一个新位置写入，并让「保存」以后都写那里（Ctrl+Shift+S）">
+                <a-button size="small" :disabled="!store.seq.length" :loading="store.saving" @click="doSaveAs">
+                    另存为
+                </a-button>
+            </a-tooltip>
+            <a-tooltip title="导出：按下面的选项写一份副本，不改变这份文档自己的文件">
                 <a-button size="small" :disabled="!store.seq.length" :loading="store.saving" @click="openExport">
                     <template #icon>
                         <export-outlined />
@@ -621,7 +626,17 @@ import {
     MoreOutlined,
     SettingOutlined,
 } from '@ant-design/icons-vue';
-import { SelectFile, SelectMultipleFiles, SelectDir, SaveFile, SetClipboard, WorkspacePageText, WorkspacePageImages } from '../../../wailsjs/go/main/App';
+import {
+    SelectDir,
+    SetClipboard,
+    WorkspacePickFile,
+    WorkspacePickFiles,
+    WorkspacePickPdfToOpen,
+    WorkspaceRememberDir,
+    WorkspaceSaveDialog,
+    WorkspacePageText,
+    WorkspacePageImages,
+} from '../../../wailsjs/go/main/App';
 import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
 import { installDropFix } from '../../dropfix';
 import { themeMode } from '../../theme';
@@ -1153,8 +1168,8 @@ export default defineComponent({
             ['Ctrl + 滚轮 / Ctrl + / Ctrl -', '缩放'],
             ['Ctrl + 0', '缩放回「适应窗口」'],
             ['Ctrl + Z / Ctrl + Shift + Z', '撤销 / 重做'],
-            ['Ctrl + S', '保存（覆盖主来源文件，先自动备份 .bak）'],
-            ['Ctrl + Shift + S', '导出为新的 PDF'],
+            ['Ctrl + S', '保存（没有文件时按「另存为」提示选位置；覆盖前自动备份 .bak）'],
+            ['Ctrl + Shift + S', '另存为（写入新位置，之后「保存」就写它）'],
         ];
 
         // --- 裁剪 / 遮盖的框选交互 ----------------------------------------
@@ -1342,7 +1357,7 @@ export default defineComponent({
             }
             if (key === 'pdf') {
                 try {
-                    const p: string = await SelectFile();
+                    const p: string = await WorkspacePickFile('选择要插入的 PDF', 'pdf');
                     if (!p) return;
                     const docId = await store.registerSource(p);
                     insDocId.value = docId;
@@ -1356,7 +1371,7 @@ export default defineComponent({
             }
             if (key === 'append') {
                 try {
-                    const p: string = await SelectFile();
+                    const p: string = await WorkspacePickFile('选择要追加的 PDF', 'pdf');
                     if (!p) return;
                     const docId = await store.registerSource(p);
                     store.appendSource(docId);
@@ -1367,7 +1382,7 @@ export default defineComponent({
             }
             if (key === 'images') {
                 try {
-                    const ps: string[] = await SelectMultipleFiles();
+                    const ps: string[] = await WorkspacePickFiles('选择要插入的图片', 'image');
                     if (!ps || !ps.length) return;
                     const docId = await store.registerImageSource(ps);
                     store.appendSource(docId);
@@ -1390,6 +1405,30 @@ export default defineComponent({
             exportScope.value === 'selected' ? store.selected.length : store.seq.length
         );
 
+        /** 由当前文档名推一个默认文件名，给文件对话框当初始值 */
+        const suggestName = (suffix: string) => {
+            const p = store.mainPath;
+            const base = p ? p.replace(/^.*[\\/]/, '').replace(/\.pdf$/i, '') : '未命名文档';
+            return `${base}${suffix}.pdf`;
+        };
+
+        /**
+         * 另存为：选一个文件写进去，并让它成为**这份文档的文件**。
+         *
+         * 与「导出」的区别：导出只写一份副本，文档自己的文件不变；
+         * 另存为之后「保存」就写新位置了。
+         */
+        const doSaveAs = async () => {
+            try {
+                const p = await WorkspaceSaveDialog('另存为', suggestName(''));
+                if (!p) return;
+                const msg = await store.saveAsTo(p, false, true);
+                message.success(msg);
+            } catch (e: any) {
+                fail(e);
+            }
+        };
+
         /** 把合并结果整体写回主来源文件。多来源时会先确认，因为它会改动原文件。 */
         const runSave = async (target: string) => {
             try {
@@ -1402,8 +1441,10 @@ export default defineComponent({
 
         const doSave = async () => {
             const target = store.mainPath;
+            // 还没有目标文件时，「保存」按桌面软件的惯例走「另存为」，
+            // 而不是把按钮置灰、让用户自己去找「导出」。
             if (!target) {
-                message.error('没有可保存的目标文件，请用「导出」指定输出路径');
+                await doSaveAs();
                 return;
             }
             if (store.sourceList.length > 1) {
@@ -1434,7 +1475,7 @@ export default defineComponent({
 
         const pickExportPath = async () => {
             try {
-                const p: string = await SaveFile();
+                const p: string = await WorkspaceSaveDialog('导出 PDF', suggestName('-导出'));
                 if (p) exportPath.value = p;
             } catch (e: any) {
                 fail(e);
@@ -1625,6 +1666,8 @@ export default defineComponent({
             }
             imgFailed.value = false;
             urlMode.value = 'relative';
+            // 记住这次拖进来的位置：紧接着弹文件对话框（另存为/导出）时会从那里开始
+            void WorkspaceRememberDir(paths[0]);
             try {
                 const res = await store.insertDroppedFiles(paths, at);
                 if (res.inserted) {
@@ -1687,7 +1730,7 @@ export default defineComponent({
 
         const pickFile = async () => {
             try {
-                const p: string = await SelectFile();
+                const p: string = await WorkspacePickPdfToOpen();
                 if (!p) return;
                 if (!p.toLowerCase().endsWith('.pdf')) {
                     message.error('请选择 PDF 文件');
@@ -1717,7 +1760,7 @@ export default defineComponent({
             const ctrl = e.ctrlKey || e.metaKey;
             if (ctrl && e.key.toLowerCase() === 's') {
                 e.preventDefault();
-                if (e.shiftKey) openExport();
+                if (e.shiftKey) doSaveAs();
                 else doSave();
                 return;
             }
@@ -1843,6 +1886,8 @@ export default defineComponent({
                                 handleFileDrop(x, y, paths),
                             zoomPct: () => zoomPct.value,
                             contDbg: () => contDbg.value,
+                            doSave: () => doSave(),
+                            doSaveAs: () => doSaveAs(),
                             setMode: (m: 'view' | 'crop' | 'mask') => {
                                 mode.value = m;
                             },
@@ -1958,6 +2003,7 @@ export default defineComponent({
             doInsertFromPdf,
             // 保存与导出
             doSave,
+            doSaveAs,
             openExport,
             pickExportPath,
             doExport,

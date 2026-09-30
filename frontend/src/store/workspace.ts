@@ -1082,7 +1082,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             outFile: string,
             scope: "all" | "selected",
             compress: boolean,
-            backup: boolean
+            backup: boolean,
+            adopt = false
         ): Promise<string> {
             this.saving = true;
             this.error = "";
@@ -1096,9 +1097,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 // 清单里指向它的页下标就失效了，必须重新加载，否则后续导出会串页。
                 // 新建的文档（没有来源）另存为之后，也把输出文件当作它的文件，
                 // 这样「保存」就能用了——与桌面软件"另存为"的直觉一致。
+                // adopt=true（另存为）时无条件接管：用户明确要求"以后就存这里"。
                 const noSource = Object.keys(this.sources).length === 0;
                 const hitSource = Object.values(this.sources).some((s) => s.path === outFile);
-                if (hitSource || noSource) {
+                if (adopt || hitSource || noSource) {
                     await this.open(outFile);
                 } else if (scope === "all") {
                     // 全部内容已落盘，视为没有未保存的更改
@@ -1108,6 +1110,14 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             } finally {
                 this.saving = false;
             }
+        },
+
+        /**
+         * 另存为：写到指定文件，并让它成为这份文档的文件。
+         * 之后再按「保存」就写这个新位置，而不是原来那份。
+         */
+        async saveAsTo(outFile: string, compress = false, backup = true): Promise<string> {
+            return this.exportTo(outFile, "all", compress, backup, true);
         },
 
         // --- 无人值守验证用的钩子 ------------------------------------------

@@ -303,6 +303,24 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 );
                 break;
             }
+            // saveas:<路径> —— 另存为到指定路径（跳过文件对话框，验证"写完接管文件"这条链路）
+            case "saveas": {
+                const msg = await store.saveAsTo(arg, false, true);
+                log.push(`saveas -> ${msg} 主文件=${store.mainPath} 未保存=${store.dirty}`);
+                break;
+            }
+            // savedlg —— 弹出真正的「另存为」对话框（供截图确认过滤器与默认文件名）
+            case "savedlg": {
+                void ui?.doSaveAs?.();
+                log.push("savedlg 已弹出");
+                break;
+            }
+            // save —— 走「保存」按钮的逻辑（还没有文件时应当自动转成另存为）
+            case "save": {
+                void ui?.doSave?.();
+                log.push("save 已触发");
+                break;
+            }
             // mode:view|crop|mask —— 切换画布模式
             case "mode": {
                 ui?.setMode?.(arg === "crop" ? "crop" : arg === "mask" ? "mask" : "view");
