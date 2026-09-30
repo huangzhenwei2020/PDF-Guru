@@ -333,8 +333,11 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
             }
             // exportdlg —— 打开导出对话框（供截图确认格式/范围选项）
             case "exportdlg": {
+                // exportdlg[:格式] —— 可先指定格式再打开，便于截图确认各格式的界面
+                if (arg) ui?.setExportFormat?.(arg);
                 ui?.openExport?.();
-                log.push("exportdlg 已弹出");
+                if (arg) ui?.setExportFormat?.(arg);
+                log.push(`exportdlg:${arg || "pdf"} 已弹出`);
                 break;
             }
             // savedlg —— 弹出真正的「另存为」对话框（供截图确认过滤器与默认文件名）

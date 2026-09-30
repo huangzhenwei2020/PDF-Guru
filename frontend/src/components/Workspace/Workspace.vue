@@ -447,11 +447,17 @@
                     <a-input v-if="exportScope === 'range'" v-model:value="exportRange" style="margin-top: 8px;"
                         placeholder="例如 1-3,5,8-N（N 表示最后一页）" />
                 </a-form-item>
-                <a-form-item v-if="isImageExport && !isDxfExport" label="分辨率">
+                <!-- 分辨率只对位图有意义（DXF/SVG 是矢量，没有 DPI 概念） -->
+                <a-form-item v-if="isImageExport && !isDxfExport && exportFormat !== 'svg'" label="分辨率">
                     <a-input-number v-model:value="exportDpi" :min="36" :max="600" :step="50" />
                     <span class="ws-note" style="margin-left: 8px;">DPI（越大越清晰、文件越大）</span>
                 </a-form-item>
-                <template v-else>
+                <!--
+                    压缩与备份只对 PDF 有效，所以这里必须**显式**判断，
+                    不能用 v-else 配上面的条件：DXF/SVG 下那个条件为假，会掉进 else 把
+                    PDF 专用选项露出来（已经踩过一次）。
+                -->
+                <template v-if="!isImageExport">
                     <a-form-item style="margin-bottom: 0;">
                         <a-checkbox v-model:checked="exportCompress">更强的压缩（稍慢）</a-checkbox>
                     </a-form-item>
@@ -1994,6 +2000,9 @@ export default defineComponent({
                             contDbg: () => contDbg.value,
                             doSave: () => doSave(),
                             doSaveAs: () => doSaveAs(),
+                            setExportFormat: (f: 'pdf' | 'png' | 'jpg' | 'svg' | 'dxf') => {
+                                exportFormat.value = f;
+                            },
                             setMode: (m: 'view' | 'crop' | 'mask') => {
                                 mode.value = m;
                             },
