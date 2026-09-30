@@ -16,7 +16,17 @@ requests==2.34.2
 pdfrw==0.4
 defusedxml==0.7.1
 
-# --- 构建期依赖（把 pdf.py 冻结成单文件 pdf.exe）---
+# --- 内置 Office 渲染器依赖（没有本机 Office 时用它转 docx/pptx/xlsx）---
+# 少任何一个：那条兜底路径就没了，只留下"必须装 Office"的 COM 路径。
+#   python-docx / python-pptx / openpyxl —— 解析 OOXML
+#   fontTools —— PyMuPDF 的字体子集化靠它；缺了产物会从 ~40KB 涨到 3.5MB
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
+fonttools==4.66.1
+lxml==6.1.3
+
+# --- 构建期依赖（把 pdf.py 冻结成 onedir 产物）---
 pyinstaller==6.22.3
 
 # --- 注意：ocr.py 的依赖刻意未列入 ---
