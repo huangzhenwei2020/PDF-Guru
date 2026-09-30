@@ -418,7 +418,7 @@ def getParser():
     ws_export_parser.add_argument("-o", "--output", type=str, required=True,
                                  help="输出文件路径（导出图片时是输出目录）")
     ws_export_parser.add_argument("--format", type=str, default="pdf",
-                                 choices=["pdf", "png", "jpg", "jpeg", "svg"], help="输出格式")
+                                 choices=["pdf", "png", "jpg", "jpeg", "svg", "dxf"], help="输出格式")
     ws_export_parser.add_argument("--dpi", type=int, default=150,
                                  help="导出图片时的分辨率（36~600）")
     ws_export_parser.add_argument("--compress", action="store_true",

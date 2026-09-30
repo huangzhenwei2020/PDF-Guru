@@ -16,6 +16,7 @@
 """
 
 import json
+import math
 import os
 import re
 import shutil
@@ -487,6 +488,270 @@ def workspace_build(plan_path: str, output_path: str, compress: bool = False):
 # PyMuPDF 是按扩展名判断输出格式的，所以这里的键必须就是真实扩展名。
 _EXPORT_IMAGE_EXT = {"png": ".png", "jpg": ".jpg", "jpeg": ".jpg", "svg": ".svg"}
 
+# ---------------------------------------------------------------------------
+# DXF（CAD）导出
+#
+# 为什么能做：PyMuPDF 的 page.get_drawings() 能取出页面里的矢量几何
+# （直线、矩形、贝塞尔曲线、填充），而 DXF 是公开的文本格式，可以自己写。
+#
+# 为什么 DWG 不做：那是 Autodesk 的私有格式，写入需要 ODA/Autodesk 的 SDK，
+# 没有可用的开源方案。所以只支持 DXF。
+#
+# **只对矢量 PDF 有意义**。扫描件里没有几何、只有一张位图，导出来会是空的——
+# 这种情况会明确报错，而不是给用户一个空文件还以为成功了。
+# ---------------------------------------------------------------------------
+
+_MM_PER_PT = 25.4 / 72.0  # PDF 点 -> 毫米：CAD 里通常按毫米作图
+
+# DXF 的颜色索引（ACI）。R12 不支持真彩色，只能归到最接近的基础色。
+_ACI_TABLE = [
+    (1, (1.0, 0.0, 0.0)),
+    (2, (1.0, 1.0, 0.0)),
+    (3, (0.0, 1.0, 0.0)),
+    (4, (0.0, 1.0, 1.0)),
+    (5, (0.0, 0.0, 1.0)),
+    (6, (1.0, 0.0, 1.0)),
+    (8, (0.5, 0.5, 0.5)),
+]
+
+
+def _nearest_aci(rgb):
+    """颜色 -> ACI。**近黑与近白都归到 7**：那是 CAD 的"默认前景色"，
+    白底显示为黑、黑底显示为白。若纯按 RGB 距离比，纯黑会落到灰色 8，
+    整张图在默认背景下会显得发灰。"""
+    if not rgb:
+        return 7
+    lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
+    if lum < 0.18 or lum > 0.82:
+        return 7
+    best, best_d = 7, 1e9
+    for aci, ref in _ACI_TABLE:
+        d = sum((rgb[i] - ref[i]) ** 2 for i in range(3))
+        if d < best_d:
+            best, best_d = aci, d
+    return best
+
+
+def _bezier_points(p1, p2, p3, p4, tol):
+    """三次贝塞尔 -> 折线点。
+
+    分段数按控制多边形长度与容差估，并**封顶 64 段**：
+    早先按"弦长/容差"直接算，一条曲线会产生近 500 个顶点，
+    文件白白变大，在 CAD 里也不好选。
+    """
+    poly = (abs(p1.x - p2.x) + abs(p1.y - p2.y)
+            + abs(p2.x - p3.x) + abs(p2.y - p3.y)
+            + abs(p3.x - p4.x) + abs(p3.y - p4.y)) * _MM_PER_PT
+    n = int(math.sqrt(max(poly, 0.01) / max(tol, 0.02)) * 2)
+    n = max(4, min(64, n))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        mt = 1 - t
+        x = (mt ** 3) * p1.x + 3 * (mt ** 2) * t * p2.x + 3 * mt * (t ** 2) * p3.x + (t ** 3) * p4.x
+        y = (mt ** 3) * p1.y + 3 * (mt ** 2) * t * p2.y + 3 * mt * (t ** 2) * p3.y + (t ** 3) * p4.y
+        pts.append((x, y))
+    return pts
+
+
+def _dxf_path_runs(items, tol):
+    """把一条 drawing 的 items 展开成若干条折线（彼此不相连的段分开）。"""
+    runs = []
+    cur = []
+    for it in items:
+        kind = it[0]
+        if kind == "l":
+            a, b = it[1], it[2]
+            if not cur:
+                cur = [(a.x, a.y)]
+            cur.append((b.x, b.y))
+        elif kind == "c":
+            pts = _bezier_points(it[1], it[2], it[3], it[4], tol)
+            if not cur:
+                cur = [pts[0]]
+            cur.extend(pts[1:])
+        elif kind == "re":
+            r = it[1]
+            if cur:
+                runs.append(cur)
+                cur = []
+            runs.append([(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1), (r.x0, r.y0)])
+        elif kind == "qu":
+            q = it[1]
+            if cur:
+                runs.append(cur)
+                cur = []
+            runs.append([(q.ul.x, q.ul.y), (q.ur.x, q.ur.y),
+                         (q.lr.x, q.lr.y), (q.ll.x, q.ll.y), (q.ul.x, q.ul.y)])
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+class _DxfPage:
+    """一页 PDF 的 DXF 实体收集。"""
+
+    def __init__(self, page_height_pt, offset_mm, scale, tol):
+        self.entities = []
+        self.layers = {}
+        self.page_h = page_height_pt
+        self.off = offset_mm
+        self.scale = scale
+        self.tol = tol
+        self.min_x = self.min_y = 1e18
+        self.max_x = self.max_y = -1e18
+
+    def _xy(self, x, y):
+        # PDF 的 y 向下、DXF 的 y 向上 —— 必须翻转；
+        # 多页时再水平错开，免得叠在一起。
+        mx = x * self.scale + self.off
+        my = (self.page_h - y) * self.scale
+        self.min_x = min(self.min_x, mx); self.max_x = max(self.max_x, mx)
+        self.min_y = min(self.min_y, my); self.max_y = max(self.max_y, my)
+        return mx, my
+
+    def _layer(self, rgb, filled=False):
+        aci = _nearest_aci(rgb)
+        name = f"{'FILL' if filled else 'LINE'}_{aci}"
+        self.layers[name] = aci
+        return name
+
+    def line(self, x1, y1, x2, y2, rgb):
+        ax, ay = self._xy(x1, y1)
+        bx, by = self._xy(x2, y2)
+        self.entities.append(
+            "0\nLINE\n8\n{}\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n11\n{:.4f}\n21\n{:.4f}\n31\n0.0\n"
+            .format(self._layer(rgb), ax, ay, bx, by))
+
+    def polyline(self, pts, rgb, filled=False):
+        if len(pts) < 2:
+            return
+        layer = self._layer(rgb, filled)
+        out = ["0\nPOLYLINE\n8\n{}\n66\n1\n70\n{}\n".format(layer, 1 if filled else 0)]
+        for (x, y) in pts:
+            mx, my = self._xy(x, y)
+            out.append("0\nVERTEX\n8\n{}\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n".format(layer, mx, my))
+        out.append("0\nSEQEND\n")
+        self.entities.append("".join(out))
+
+    def text(self, x, y, s, height_pt, rgb):
+        s = (s or "").replace("\n", " ").replace("\r", " ").strip()
+        if not s:
+            return
+        mx, my = self._xy(x, y)
+        self.entities.append(
+            "0\nTEXT\n8\n{}\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n40\n{:.4f}\n1\n{}\n"
+            .format(self._layer(rgb), mx, my, max(0.5, height_pt * self.scale), s))
+
+
+def _dxf_document(pages):
+    """把多页实体合成一份 DXF R12 文本。
+
+    刻意只用 LINE / POLYLINE / TEXT 三种实体，也不写 CLASSES、OBJECTS 段：
+    R12 是兼容面最广的一档，AutoCAD、中望、LibreCAD、QCAD 都能打开。
+    换用 LWPOLYLINE / HATCH / SPLINE 这些 R13+ 的写法，遇到低版本会整张图打不开。
+    """
+    min_x = min_y = 1e18
+    max_x = max_y = -1e18
+    entities = []
+    layers = {}
+    for p in pages:
+        entities.extend(p.entities)
+        layers.update(p.layers)
+        min_x = min(min_x, p.min_x); max_x = max(max_x, p.max_x)
+        min_y = min(min_y, p.min_y); max_y = max(max_y, p.max_y)
+    if min_x > max_x:
+        min_x = min_y = 0.0
+        max_x = max_y = 1.0
+
+    parts = [
+        "0\nSECTION\n2\nHEADER\n",
+        "9\n$ACADVER\n1\nAC1009\n",
+        "9\n$INSUNITS\n70\n4\n",  # 4 = 毫米
+        "9\n$EXTMIN\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n".format(min_x, min_y),
+        "9\n$EXTMAX\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n".format(max_x, max_y),
+        "0\nENDSEC\n",
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n{}\n".format(len(layers) + 1),
+        "0\nLAYER\n2\n0\n70\n0\n62\n7\n6\nCONTINUOUS\n",
+    ]
+    for name, aci in sorted(layers.items()):
+        parts.append("0\nLAYER\n2\n{}\n70\n0\n62\n{}\n6\nCONTINUOUS\n".format(name, aci))
+    parts.append("0\nENDTAB\n0\nENDSEC\n")
+    parts.append("0\nSECTION\n2\nENTITIES\n")
+    parts.extend(entities)
+    parts.append("0\nENDSEC\n0\nEOF\n")
+    return "".join(parts)
+
+
+def _export_dxf(pdf_path: str, out_dir: Path, prefix: str):
+    """PDF -> DXF。多页按水平方向并排放在同一张图里（DXF 没有"页"的概念）。
+
+    返回 (矢量页数, 总页数)。全是扫描件时矢量页数为 0，调用方据此报错。
+    """
+    scale = _MM_PER_PT
+    tol = 0.2          # 曲线离散容差（毫米）
+    page_gap_mm = 10.0
+
+    doc = fitz.open(pdf_path)
+    try:
+        offsets = []
+        x = 0.0
+        for i in range(doc.page_count):
+            r = doc[i].rect
+            offsets.append(x)
+            x += r.width * scale + page_gap_mm
+
+        pages = []
+        vector_pages = 0
+        for i in range(doc.page_count):
+            page = doc[i]
+            dp = _DxfPage(page.rect.height, offsets[i], scale, tol)
+
+            drawings = page.get_drawings()
+            if drawings:
+                vector_pages += 1
+            for d in drawings:
+                stroke = d.get("color")
+                fill = d.get("fill")
+                rgb = stroke if stroke is not None else fill
+                is_fill = stroke is None and fill is not None
+                for run in _dxf_path_runs(d.get("items") or [], tol):
+                    if len(run) == 2 and not is_fill:
+                        dp.line(run[0][0], run[0][1], run[1][0], run[1][1], rgb)
+                    else:
+                        dp.polyline(run, rgb, is_fill)
+
+            # 文字：只有 dict 模式才拿得到字号与精确位置
+            for block in page.get_text("dict").get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        txt = span.get("text", "")
+                        if not txt.strip():
+                            continue
+                        bbox = span.get("bbox") or (0, 0, 0, 0)
+                        size = float(span.get("size") or 10)
+                        col = int(span.get("color", 0))
+                        rgb3 = (((col >> 16) & 255) / 255.0,
+                                ((col >> 8) & 255) / 255.0,
+                                (col & 255) / 255.0)
+                        # 基线大致在 bbox 底部；字高取 0.72 倍字号（常用经验值）
+                        dp.text(bbox[0], bbox[3], txt, size * 0.72, rgb3)
+
+            pages.append(dp)
+
+        # 检查放在**写文件之前**：否则会先落一个空 DXF 再报错，
+        # 用户可能只看到"文件生成了"，打开却是空的。
+        if vector_pages == 0:
+            raise ValueError(
+                f"这 {doc.page_count} 页里没有矢量图形（只有文字或图片），无法转成 DXF。"
+                "扫描件、截图、纯文字排版都属这种情况；要转 CAD 请用原始 CAD 导出的矢量 PDF。"
+            )
+
+        (out_dir / f"{prefix}.dxf").write_text(_dxf_document(pages), encoding="utf-8", newline="\n")
+        return vector_pages, doc.page_count
+    finally:
+        doc.close()
+
 
 def workspace_export(plan_path: str, output_path: str, fmt: str = "pdf",
                      dpi: int = 150, compress: bool = False, prefix: str = ""):
@@ -507,7 +772,8 @@ def workspace_export(plan_path: str, output_path: str, fmt: str = "pdf",
             utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
             return
 
-        ext = _EXPORT_IMAGE_EXT.get(fmt)
+        is_dxf = fmt == "dxf"
+        ext = ".dxf" if is_dxf else _EXPORT_IMAGE_EXT.get(fmt)
         if ext is None:
             raise ValueError(f"不支持的导出格式：{fmt}")
 
@@ -518,6 +784,14 @@ def workspace_export(plan_path: str, output_path: str, fmt: str = "pdf",
         try:
             tmp_pdf = os.path.join(tmpdir, "src.pdf")
             _build_pdf(plan_path, tmp_pdf, False)
+
+            if is_dxf:
+                stem = (prefix or Path(plan_path).stem).strip() or "export"
+                stem = re.sub(r'[\\/:*?"<>|]+', "_", stem) or "export"
+                # 没有矢量图形时 _export_dxf 会直接抛错（在写文件之前），这里不用再判
+                _export_dxf(tmp_pdf, out_dir, stem)
+                utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+                return
 
             doc = fitz.open(tmp_pdf)
             try:

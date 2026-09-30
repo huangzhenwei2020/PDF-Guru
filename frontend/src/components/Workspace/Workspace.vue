@@ -415,20 +415,25 @@
                         <a-radio-button value="png">PNG 图片</a-radio-button>
                         <a-radio-button value="jpg">JPG 图片</a-radio-button>
                         <a-radio-button value="svg">SVG 矢量</a-radio-button>
+                        <a-radio-button value="dxf">DXF (CAD)</a-radio-button>
                     </a-radio-group>
                 </a-form-item>
                 <a-form-item :label="isImageExport ? '输出目录' : '输出文件'">
                     <a-row :gutter="8">
                         <a-col :span="19">
                             <a-input v-model:value="exportPath"
-                                :placeholder="isImageExport ? '图片输出到哪个目录（每页一个文件）' : '输出 PDF 的完整路径'" />
+                                :placeholder="isImageExport ? '输出到哪个目录' : '输出 PDF 的完整路径'" />
                         </a-col>
                         <a-col :span="5">
                             <a-button @click="pickExportPath">选择…</a-button>
                         </a-col>
                     </a-row>
-                    <div v-if="isImageExport" class="ws-note" style="margin-top: 4px;">
-                        每页导出一个文件，命名为 <code>…-page-序号.png</code>
+                    <div v-if="isDxfExport" class="ws-note" style="margin-top: 4px;">
+                        导出为 <code>名称.dxf</code>（AutoCAD R12 格式、单位毫米、按颜色分层）。
+                        <b>只对矢量 PDF 有效</b>：扫描件、截图和纯文字排版里没有矢量图形，会明确报错而不是给个空文件。
+                    </div>
+                    <div v-else-if="isImageExport" class="ws-note" style="margin-top: 4px;">
+                        每页导出一个文件，命名为 <code>…-page-序号.扩展名</code>
                     </div>
                 </a-form-item>
                 <a-form-item label="页面范围">
@@ -442,7 +447,7 @@
                     <a-input v-if="exportScope === 'range'" v-model:value="exportRange" style="margin-top: 8px;"
                         placeholder="例如 1-3,5,8-N（N 表示最后一页）" />
                 </a-form-item>
-                <a-form-item v-if="isImageExport" label="分辨率">
+                <a-form-item v-if="isImageExport && !isDxfExport" label="分辨率">
                     <a-input-number v-model:value="exportDpi" :min="36" :max="600" :step="50" />
                     <span class="ws-note" style="margin-left: 8px;">DPI（越大越清晰、文件越大）</span>
                 </a-form-item>
@@ -1424,12 +1429,15 @@ export default defineComponent({
         const exportScope = ref<'all' | 'selected' | 'range'>('all');
         const exportRange = ref('');
         /** 导出格式：PDF 或图片/矢量 */
-        const exportFormat = ref<'pdf' | 'png' | 'jpg' | 'svg'>('pdf');
+        const exportFormat = ref<'pdf' | 'png' | 'jpg' | 'svg' | 'dxf'>('pdf');
         const exportDpi = ref(150);
         const exportCompress = ref(false);
         const exportBackup = ref(true);
 
+        /** 非 PDF 的输出都写进一个目录（图片每页一个文件，DXF 是一个文件） */
         const isImageExport = computed(() => exportFormat.value !== 'pdf');
+        /** DXF 特有：只有矢量内容才转得出来，扫描件会明确报错 */
+        const isDxfExport = computed(() => exportFormat.value === 'dxf');
 
         /** 自定义范围解析出的位置下标（0-based）；出错时为 null */
         const exportRangeIdx = computed<number[] | null>(() => {
@@ -2115,6 +2123,7 @@ export default defineComponent({
             exportRange,
             exportDpi,
             isImageExport,
+            isDxfExport,
             exportRangeError,
             // 页面装饰
             decorVisible,
