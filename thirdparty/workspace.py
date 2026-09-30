@@ -667,6 +667,11 @@ def _dxf_document(pages):
     parts = [
         "0\nSECTION\n2\nHEADER\n",
         "9\n$ACADVER\n1\nAC1009\n",
+        # R12 的字符串**不是 UTF-8**，而是按 $DWGCODEPAGE 声明的代码页解释。
+        # 不声明这一项又直接写 UTF-8 字节，中文在 AutoCAD 里就是乱码
+        # （用 ezdxf 按规范读回来是 'å›¾ çº¸ ç›® å½•' 这种）。
+        # 这里统一按简体中文的 ANSI_936（GBK）写，见文件末尾的 _DXF_CODEPAGE。
+        "9\n$DWGCODEPAGE\n3\nANSI_936\n",
         "9\n$INSUNITS\n70\n4\n",  # 4 = 毫米
         "9\n$EXTMIN\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n".format(min_x, min_y),
         "9\n$EXTMAX\n10\n{:.4f}\n20\n{:.4f}\n30\n0.0\n".format(max_x, max_y),
@@ -747,7 +752,12 @@ def _export_dxf(pdf_path: str, out_dir: Path, prefix: str):
                 "扫描件、截图、纯文字排版都属这种情况；要转 CAD 请用原始 CAD 导出的矢量 PDF。"
             )
 
-        (out_dir / f"{prefix}.dxf").write_text(_dxf_document(pages), encoding="utf-8", newline="\n")
+        # 用 GBK（ANSI_936）写，与头部声明的 $DWGCODEPAGE 一致。
+        # errors="replace" 是兜底：GBK 覆盖了中文、日文假名、希腊/西里尔字母以及
+        # CAD 常用的 ± ° φ 等符号，极少数编码不了的（比如 emoji）降级成 "?"，
+        # 总好过整个文件写不出去。
+        (out_dir / f"{prefix}.dxf").write_bytes(
+            _dxf_document(pages).encode("gbk", errors="replace"))
         return vector_pages, doc.page_count
     finally:
         doc.close()
