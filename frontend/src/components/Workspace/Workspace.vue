@@ -717,11 +717,59 @@ export default defineComponent({
         const origin = window.location.origin;
 
         /**
-         * 缩放参考宽度：显示尺寸以它为准，与"当前用哪一档分辨率渲染"解耦。
-         * 取 900 是因为那正是默认档的渲染宽度，于是 100% 的含义
-         * 就是"默认档渲染图 1 像素对 1 CSS 像素"。
+         * 缩放参考宽度：**100% 时"基准页面"显示多宽**。
+         *
+         * 基准页面取 A4 宽度（PT_REF_WIDTH = 595pt），所以 100% 的含义是
+         * "A4 宽的页显示成 900 CSS px"，而更宽的图纸会按同一比例显示得更宽。
+         *
+         * 早先这里把显示尺寸建立在**渲染图的像素宽度**上，而渲染宽度对所有页
+         * 都是同一档（900px），于是 A2 与 A4 都被拉成一样宽——
+         * 表现为"每页看起来一样大"，缩放百分比也失去意义。
          */
         const ZOOM_REF_WIDTH = 900;
+        /** 基准页面宽度（pt）：A4。 */
+        const PT_REF_WIDTH = 595;
+        /** 100% 时 1pt 对应多少 CSS px。 */
+        const CSS_PER_PT_AT_100 = ZOOM_REF_WIDTH / PT_REF_WIDTH;
+        /** 1:1（实际大小）时 1pt 的 CSS px：CSS 的 1px 按 1/96 英寸算。 */
+        const CSS_PER_PT_ACTUAL = 96 / 72;
+
+        /**
+         * 页面的**真实**尺寸（pt，已按旋转交换宽高）。
+         *
+         * 必须用来源页的点尺寸，不能用渲染图尺寸——渲染宽度是按档位统一的，
+         * 拿它当尺寸就等于把所有页归一化成一样大。
+         * 拿不到时退回 A4，宁可占位保守也不要编一个尺寸出来。
+         */
+        const ptSizeOf = (item: any): { w: number; h: number } => {
+            const rot = item.kind === 'page' ? item.rotation || 0 : 0;
+            const rot90 = rot === 90 || rot === 270;
+            const pg = item.kind === 'page' ? store.pageInfoOf(item) : null;
+            const w = pg && pg.width > 0 ? pg.width : PT_REF_WIDTH;
+            const h = pg && pg.height > 0 ? pg.height : PT_REF_WIDTH * 1.414;
+            return rot90 ? { w: h, h: w } : { w, h };
+        };
+
+        /**
+         * 「适应窗口」的比例：**按整份文档里最大的一页**定，
+         * 而不是逐页各自铺满。
+         *
+         * 逐页铺满会让每一页看起来一样大，正是用户反馈的问题；
+         * 按最大页定比例则：最大页正好放下，小页按真实尺寸相应变小，
+         * 各页之间的大小关系始终是真实的。
+         */
+        const docFitCssPerPt = (availW: number, availH: number): number => {
+            let s = Infinity;
+            for (const item of store.seq) {
+                const p = ptSizeOf(item);
+                s = Math.min(s, availW / p.w, availH / p.h);
+            }
+            return isFinite(s) && s > 0 ? s : 1;
+        };
+
+        /** 自定义倍率下的比例（CSS px / pt）：只由倍率决定，与页面大小无关。 */
+        const customCssPerPt = () => store.zoom * CSS_PER_PT_AT_100;
+
         const autoLog = ref('');
         /** 诊断用：把未捕获的 JS 异常也显示出来，否则生产构建里看不到控制台 */
         const jsErr = ref('');
@@ -844,20 +892,26 @@ export default defineComponent({
                 if (!item) continue;
                 const rot = item.kind === 'page' ? item.rotation || 0 : 0;
                 const rot90 = rot === 90 || rot === 270;
+                // 真实尺寸（pt，已交换宽高）——显示比例以它为准
+                const pt = ptSizeOf(item);
 
                 if (item.kind === 'blank') {
-                    // 空白页没有可渲染的内容，按 A4 的名义尺寸占位；
-                    // 宽度用参考宽度，这样它与真实页面的"同一倍数"看起来一样大
-                    raw.push({ item, blank: true, imgW: ZOOM_REF_WIDTH, dispW: ZOOM_REF_WIDTH, dispH: Math.round(ZOOM_REF_WIDTH * 1.414) });
+                    // 空白页没有可渲染的内容，占位尺寸就按它的名义纸张（A4 默认）
+                    raw.push({
+                        item, blank: true, ptW: pt.w, ptH: pt.h,
+                        imgW: ZOOM_REF_WIDTH, dispW: ZOOM_REF_WIDTH,
+                        dispH: Math.round(ZOOM_REF_WIDTH * (pt.h / pt.w)),
+                    });
                     continue;
                 }
 
                 const p = k === 0 ? store.preview : store.previewB;
                 if (!p) {
                     raw.push({
-                        item, blank: false, pending: true, imgW: ZOOM_REF_WIDTH,
-                        dispW: rot90 ? Math.round(ZOOM_REF_WIDTH * 1.414) : ZOOM_REF_WIDTH,
-                        dispH: rot90 ? ZOOM_REF_WIDTH : Math.round(ZOOM_REF_WIDTH * 1.414),
+                        item, blank: false, pending: true, ptW: pt.w, ptH: pt.h,
+                        imgW: ZOOM_REF_WIDTH,
+                        dispW: rot90 ? Math.round(ZOOM_REF_WIDTH * (pt.h / pt.w)) : ZOOM_REF_WIDTH,
+                        dispH: rot90 ? ZOOM_REF_WIDTH : Math.round(ZOOM_REF_WIDTH * (pt.h / pt.w)),
                     });
                     continue;
                 }
@@ -866,6 +920,8 @@ export default defineComponent({
                     blank: false,
                     pending: false,
                     url: url(p.url),
+                    ptW: pt.w,
+                    ptH: pt.h,
                     imgW: p.width,
                     imgH: p.height,
                     rot,
@@ -880,19 +936,20 @@ export default defineComponent({
             const gap = n > 1 ? 16 : 0;
             const availW = Math.max(120, canvasW.value - 30 - gap);
             const availH = Math.max(120, canvasH.value - modesH.value - 30);
-            const perPageW = availW / n;
-            let fitScale = 1;
-            for (const v of raw) {
-                fitScale = Math.min(fitScale, perPageW / v.dispW, availH / v.dispH);
-            }
+
+            // CSS px / pt：适应窗口时由**整份文档**的最大页决定，自定义时只由倍率决定。
+            // 两者都与页面自身大小无关，因此各页之间的大小关系始终是真实的。
+            const cssPerPt =
+                store.zoomMode === 'fit'
+                    ? docFitCssPerPt(availW / n, availH)
+                    : customCssPerPt();
 
             return raw.map((v) => {
-                // 自定义倍数时把显示尺寸**锚定到参考宽度**，而不是乘图像自身的像素宽度：
-                // 放大时渲染分辨率会换档（900 -> 2000），若直接乘倍数，
-                // 跨过阈值那一刻页面尺寸会突然跳一倍。适应窗口没这个问题——
-                // 图像变宽时 fitScale 同步变小，两者正好抵消。
-                const scale =
-                    store.zoomMode === 'fit' ? fitScale : (store.zoom * ZOOM_REF_WIDTH) / v.imgW;
+                // scale 是作用在 .pv-box（尺寸为渲染像素）上的倍数。
+                // 让"显示宽度 = 真实宽度 * cssPerPt"，所以：
+                //   scale = 真实宽度(pt) * cssPerPt / 占位宽度(渲染px)
+                // 这样显示的最终尺寸只跟真实尺寸有关，**换渲染档位（900/2000）也不会跳**。
+                const scale = (v.ptW * cssPerPt) / v.dispW;
                 return {
                     ...v,
                     scale,
@@ -916,40 +973,40 @@ export default defineComponent({
         const contViews = computed(() => {
             const tierW = store.previewWidth;
             const raw: any[] = [];
-            let fitScale = 1;
+            let maxPtW = 0;
 
             for (const item of store.seq) {
                 const rot = item.kind === 'page' ? item.rotation || 0 : 0;
                 const rot90 = rot === 90 || rot === 270;
-                let imgH: number;
-                if (item.kind === 'blank') {
-                    imgH = Math.round(tierW * 1.414);
-                } else {
-                    // 用来源页的点尺寸推高度——不用渲染就能知道比例
-                    const pg = store.sources[item.docId]?.pages?.[item.pageIndex];
-                    imgH = pg && pg.width > 0
-                        ? Math.round(tierW * (pg.height / pg.width))
-                        : Math.round(tierW * 1.414);
-                }
+                // 真实尺寸（pt，已交换宽高）
+                const pt = ptSizeOf(item);
+                // 占位高度仍用点尺寸推比例——不用渲染就能排出稳定的滚动布局
+                const imgH = Math.round(tierW * (pt.h / pt.w));
                 const dispW = rot90 ? imgH : tierW;
                 const dispH = rot90 ? tierW : imgH;
-                raw.push({ item, imgW: tierW, imgH, dispW, dispH, rot, rot90 });
+                maxPtW = Math.max(maxPtW, pt.w);
+                raw.push({ item, ptW: pt.w, ptH: pt.h, imgW: tierW, imgH, dispW, dispH, rot, rot90 });
             }
             if (!raw.length) return [];
 
-            // 统一比例：让最宽的一页也能放下
             const availW = Math.max(120, canvasW.value - 40);
-            for (const v of raw) fitScale = Math.min(fitScale, availW / v.dispW);
+            // 统一比例：让**最宽的那一页**正好放下，其余页按真实尺寸相应变窄。
+            // （早先是把每页都拉到同一宽度，等于把所有页当成一样大。）
+            const cssPerPt =
+                store.zoomMode === 'fit'
+                    ? availW / Math.max(1, maxPtW)
+                    : customCssPerPt();
 
-            const scale =
-                store.zoomMode === 'fit' ? fitScale : (store.zoom * ZOOM_REF_WIDTH) / tierW;
-            return raw.map((v) => ({
-                ...v,
-                scale,
-                fitW: Math.round(v.dispW * scale),
-                fitH: Math.round(v.dispH * scale),
-                ov: overlayOf(v.item),
-            }));
+            return raw.map((v) => {
+                const scale = (v.ptW * cssPerPt) / v.dispW;
+                return {
+                    ...v,
+                    scale,
+                    fitW: Math.round(v.dispW * scale),
+                    fitH: Math.round(v.dispH * scale),
+                    ov: overlayOf(v.item),
+                };
+            });
         });
 
         /** 画布上要显示的页：连续模式给全部，其它模式只给当前页（+右页） */
@@ -1129,12 +1186,15 @@ export default defineComponent({
         const refScale = computed(() => {
             const v = views.value[0];
             if (!v) return 1;
-            return (v.scale * v.imgW) / ZOOM_REF_WIDTH;
+            // scale 是"CSS px / pt"，除以基准就是倍率本身；
+            // 100% = 基准页面(A4 宽)显示成 ZOOM_REF_WIDTH 那么宽。
+            return v.scale / CSS_PER_PT_AT_100;
         });
         const zoomPct = computed(() => Math.round(refScale.value * 100));
 
         const zoomBy = (factor: number) => store.setZoom(refScale.value * factor);
-        const zoomActual = () => store.setZoom(1);
+        /** 1:1 = 实际大小：1pt 按 1/72 英寸、CSS 像素按 1/96 英寸换算。 */
+        const zoomActual = () => store.setZoom(CSS_PER_PT_ACTUAL / CSS_PER_PT_AT_100);
         const zoomFit = () => store.zoomFit();
 
         /**
@@ -1998,8 +2058,88 @@ export default defineComponent({
                                 handleFileDrop(x, y, paths),
                             zoomPct: () => zoomPct.value,
                             contDbg: () => contDbg.value,
+                            zoomActual: () => zoomActual(),
+                            zoomFit: () => zoomFit(),
                             doSave: () => doSave(),
                             doSaveAs: () => doSaveAs(),
+                            /**
+                             * 把尺寸相关的内部数据导成文本，供诊断用。
+                             *
+                             * 截图是缩放的、还带视觉噪声，靠它判断"差几个像素"不可靠；
+                             * 直接把数字拿出来对比才作数。
+                             */
+                            dumpSizes: () => {
+                                const out: string[] = [];
+                                out.push(
+                                    `thumbWidth=${store.thumbWidth} previewWidth=${store.previewWidth} ` +
+                                    `zoom=${store.zoom.toFixed(3)} mode=${store.zoomMode} view=${store.viewMode}`
+                                );
+                                const cur = store.currentItem;
+                                out.push(
+                                    `可用区: canvas=${canvasW.value}x${canvasH.value} modesH=${modesH.value} ` +
+                                    `→ avail ${Math.max(120, canvasW.value - 30)}x${Math.max(120, canvasH.value - modesH.value - 30)}`
+                                );
+                                out.push(
+                                    `比例: 基准A4 css/pt@100%=${CSS_PER_PT_AT_100.toFixed(4)} ` +
+                                    `1:1=${CSS_PER_PT_ACTUAL.toFixed(4)} ` +
+                                    `自定义=${customCssPerPt().toFixed(4)} ` +
+                                    `整册适应=${docFitCssPerPt(
+                                        Math.max(120, canvasW.value - 30),
+                                        Math.max(120, canvasH.value - modesH.value - 30)
+                                    ).toFixed(4)}`
+                                );
+                                out.push(
+                                    `当前页: ${
+                                        cur
+                                            ? `#${store.seq.indexOf(cur) + 1} ` +
+                                              `pt=${ptSizeOf(cur).w.toFixed(0)}x${ptSizeOf(cur).h.toFixed(0)}`
+                                            : '无'
+                                    }`
+                                );
+                                out.push('页面真实尺寸(pt):');
+                                store.seq.forEach((it, i) => {
+                                    const pi = it.kind === 'page' ? store.pageInfoOf(it) : null;
+                                    out.push(
+                                        `  p${i + 1} ${pi ? `${pi.width.toFixed(1)}x${pi.height.toFixed(1)}` : 'blank'}` +
+                                        ` rot=${it.kind === 'page' ? it.rotation || 0 : 0}`
+                                    );
+                                });
+                                out.push('缩略图行(渲染px):');
+                                rows.value.forEach((r) => {
+                                    out.push(`  ${r.label} w=${r.w} h=${r.h} 比例=${(r.w / r.h).toFixed(3)}`);
+                                });
+                                out.push('画布视图:');
+                                views.value.forEach((v, i) => {
+                                    out.push(
+                                        `  #${i} img=${v.imgW}x${v.imgH} disp=${v.dispW}x${v.dispH} ` +
+                                        `scale=${v.scale.toFixed(4)} fit=${v.fitW}x${v.fitH} ` +
+                                        `比例=${(v.dispW / v.dispH).toFixed(3)}`
+                                    );
+                                });
+                                // DOM 实际矩形：目测像素不可靠，只有实测才作数
+                                const root = document.querySelector('.ws');
+                                const r2 = (el: Element | null | undefined) => {
+                                    if (!el) return 'n/a';
+                                    const b = el.getBoundingClientRect();
+                                    return `${Math.round(b.width)}x${Math.round(b.height)}@${Math.round(b.left)},${Math.round(b.top)}`;
+                                };
+                                out.push('缩略图 DOM 实测 (row / box / img):');
+                                root?.querySelectorAll('.rail .row').forEach((row) => {
+                                    const label = row.querySelector('.no')?.textContent ?? '?';
+                                    out.push(
+                                        `  ${label} row=${r2(row)} box=${r2(row.querySelector('.box'))} ` +
+                                        `img=${r2(row.querySelector('img'))}`
+                                    );
+                                });
+                                out.push('画布 DOM 实测 (pv-fit / pv-box / img):');
+                                root?.querySelectorAll('.pv-fit').forEach((fit, i) => {
+                                    out.push(
+                                        `  #${i} fit=${r2(fit)} box=${r2(fit.querySelector('.pv-box'))} ` +
+                                        `img=${r2(fit.querySelector('img'))}`
+                                    );
+                                });
+                                return out.join('\n');
+                            },
                             setExportFormat: (f: 'pdf' | 'png' | 'jpg' | 'svg' | 'dxf') => {
                                 exportFormat.value = f;
                             },

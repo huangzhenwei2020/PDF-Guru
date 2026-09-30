@@ -22,7 +22,7 @@
  */
 
 import { displayRectToPageRect, parseRange, type NormRect, type WSItem } from "./model";
-import { WorkspacePageImages } from "../../../wailsjs/go/main/App";
+import { WorkspacePageImages, SetClipboard } from "../../../wailsjs/go/main/App";
 import { setTheme } from "../../theme";
 import { useMenuState } from "../../store/menu";
 import { dropFixOriginal, dropFixStats } from "../../dropfix";
@@ -302,6 +302,20 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                         ` B(修补后)=${bErr ? "同步报错" : "未同步报错"}` +
                         ` 过滤非文件项=${s.filteredNonFile} 实际转发=${s.forwarded}次/${s.forwardedItems}项`
                 );
+                break;
+            }
+            // zoomactual / zoomfit —— 等价于点界面上的「1:1」「适应」按钮
+            case "zoomactual": { ui?.zoomActual?.(); log.push("zoomactual"); break; }
+            case "zoomfit": { ui?.zoomFit?.(); log.push("zoomfit"); break; }
+            // sizes —— 把尺寸相关的内部数据复制到剪贴板（截图看不出精确数字）
+            case "sizes": {
+                const txt = ui?.dumpSizes?.();
+                if (txt) {
+                    await SetClipboard(txt);
+                    log.push(`sizes 已复制到剪贴板（${txt.split("\n").length} 行）`);
+                } else {
+                    log.push("sizes 失败: 没有 dumpSizes");
+                }
                 break;
             }
             // export:<路径>|格式|dpi|范围 —— 走真正的导出逻辑（可指定格式与页面范围）

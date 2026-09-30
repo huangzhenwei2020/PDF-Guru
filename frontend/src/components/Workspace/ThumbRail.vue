@@ -366,7 +366,9 @@ export default defineComponent({
 
         // 轨道宽度跟着缩略图尺寸走：写死宽度会让"大图"被裁掉右边。
         // 34 = 轨道内边距 20 + 行内边距 8 + 行边框 4 + 留一点给滚动条
-        const railWidth = computed(() => props.width + 34);
+        // +16 是给竖直滚动条留的余量：它出现时会吃掉可用宽度，
+        // 不留余量的话页面框就会挤出轨道（蓝边框随之错位）。
+        const railWidth = computed(() => props.width + 34 + 16);
 
         /** 容器尺寸 = 旋转之后的显示尺寸 */
         const boxStyle = (row: RailRow) => {
@@ -443,7 +445,12 @@ export default defineComponent({
 
 .row {
     position: relative;
-    margin-bottom: 10px;
+    /* 行宽跟着里面的页面框走，而不是铺满轨道：
+       轨道一旦出现滚动条，可用宽度会比 props.width 窄十几像素，
+       而页面框的宽度是固定的——铺满的话框会从行里溢出去，
+       选中/当前页的蓝边框就套不住页面了（实测 row 148 而 box 150）。 */
+    width: fit-content;
+    margin: 0 auto 10px;
     padding: 4px;
     border: 2px solid transparent;
     border-radius: 4px;
