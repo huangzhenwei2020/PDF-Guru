@@ -62,6 +62,7 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
         const cmd = (sep >= 0 ? token.slice(0, sep) : token).trim();
         const arg = sep >= 0 ? token.slice(sep + 1).trim() : "";
 
+        try {
         switch (cmd) {
             case "all":
                 store.selectAll();
@@ -303,10 +304,37 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 );
                 break;
             }
+            // export:<路径>|格式|dpi|范围 —— 走真正的导出逻辑（可指定格式与页面范围）
+            case "export": {
+                const parts = arg.split("|");
+                const out = parts[0] || "";
+                const fmt = (parts[1] || "pdf") as "pdf" | "png" | "jpg" | "svg";
+                const dpi = parseInt(parts[2] || "100", 10);
+                const rangeSpec = (parts[3] || "").trim();
+                let ids: string[] | null = null;
+                if (rangeSpec === "selected") {
+                    // 覆盖"仅选中"这一档，否则钩子只能测全部和自定义范围
+                    ids = store.selected.slice();
+                } else if (rangeSpec) {
+                    // parseRange 返回的就是 0-based 下标，直接用
+                    ids = parseRange(rangeSpec, store.seq.length).map(
+                        (idx: number) => store.seq[idx].id
+                    );
+                }
+                const msg = await store.exportTo(out, { ids, format: fmt, dpi, backup: true });
+                log.push(`export ${fmt} -> ${msg} 页数=${ids ? ids.length : store.seq.length}`);
+                break;
+            }
             // saveas:<路径> —— 另存为到指定路径（跳过文件对话框，验证"写完接管文件"这条链路）
             case "saveas": {
                 const msg = await store.saveAsTo(arg, false, true);
                 log.push(`saveas -> ${msg} 主文件=${store.mainPath} 未保存=${store.dirty}`);
+                break;
+            }
+            // exportdlg —— 打开导出对话框（供截图确认格式/范围选项）
+            case "exportdlg": {
+                ui?.openExport?.();
+                log.push("exportdlg 已弹出");
                 break;
             }
             // savedlg —— 弹出真正的「另存为」对话框（供截图确认过滤器与默认文件名）
@@ -445,7 +473,7 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
             // build:<输出路径> —— 走一遍真实导出，验证保存链路
             case "build": {
                 try {
-                    const msg = await store.exportTo(arg, "all", false, true);
+                    const msg = await store.exportTo(arg, { backup: true });
                     log.push(`build -> ${msg}`);
                 } catch (e: any) {
                     log.push(`build 失败: ${e?.message ?? e}`);
@@ -565,6 +593,11 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
             }
             default:
                 log.push(`未知操作: ${token}`);
+        }
+        } catch (e: any) {
+            // 单个操作失败不能中断整段脚本：否则后面的操作全不执行，
+            // 而 autoLog 又是跑完才写，界面上什么都看不到——排查时会误以为"脚本没跑"。
+            log.push(`${cmd} 失败: ${e?.message ?? e}`);
         }
     }
     return log;

@@ -358,11 +358,32 @@ type wsPlanBlank struct {
 //
 // makeBackup 为真且目标已存在时，会先把原文件备份成 .bak。备份刻意"只留第一份"：
 // 已有 .bak 就不再覆盖，这样连续保存不会把最初那一版冲掉。
+// WorkspaceBuild 按清单合成 PDF（导出为 PDF 时的入口）。
 func (a *App) WorkspaceBuild(payloadJSON string, outFile string, compress bool, makeBackup bool) (string, error) {
+	return a.wsExportTo(payloadJSON, outFile, "pdf", 150, compress, makeBackup)
+}
+
+// WorkspaceExport 按清单导出，支持 pdf / png / jpg / svg。
+//
+// 注意：导出图片时 outFile 是**目录**，会生成 <清单名>-page-N.<ext> 多个文件。
+func (a *App) WorkspaceExport(payloadJSON string, outFile string, format string, dpi int, compress bool, makeBackup bool) (string, error) {
+	return a.wsExportTo(payloadJSON, outFile, format, dpi, compress, makeBackup)
+}
+
+// wsExportTo 是上面两个的共同实现：把请求翻译成 Python 侧的清单，再交给 ws-export。
+func (a *App) wsExportTo(payloadJSON string, outFile string, format string, dpi int, compress bool, makeBackup bool) (string, error) {
 	wsInit()
 
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "" {
+		format = "pdf"
+	}
+	isPDF := format == "pdf"
+	// 导出图片时 outFile 是目录，既不该也不能做 .bak
+	makeBackup = makeBackup && isPDF
+
 	if strings.TrimSpace(outFile) == "" {
-		return "", errors.New("请先指定输出文件")
+		return "", errors.New("请先指定输出路径")
 	}
 	if !filepath.IsAbs(outFile) {
 		return "", errors.New("输出路径必须是绝对路径")
@@ -439,21 +460,43 @@ func (a *App) WorkspaceBuild(payloadJSON string, outFile string, compress bool, 
 		return "", errors.Wrap(err, "写入导出清单失败")
 	}
 
-	args := []string{"ws-build", "--output", outFile}
-	if compress {
+	args := []string{"ws-export", "--format", format, "--output", outFile,
+		"--dpi", fmt.Sprintf("%d", dpi)}
+	if compress && isPDF {
 		args = append(args, "--compress")
+	}
+	if !isPDF {
+		// 图片文件名前缀用源文档名，而不是内部清单名（build-4）——后者对用户毫无意义
+		args = append(args, "--prefix", exportPrefix(pages))
 	}
 	args = append(args, planPath)
 	if err := a.cmdRunner(args, "pdf"); err != nil {
 		return "", err
 	}
 
-	logger.Printf("工作区导出成功: %d 页 -> %s\n", len(pages), outFile)
+	logger.Printf("工作区导出成功: %d 页 -> %s (%s)\n", len(pages), outFile, format)
+	if !isPDF {
+		return fmt.Sprintf("已导出 %d 页为 %s 到 %s", len(pages), strings.ToUpper(format), outFile), nil
+	}
 	return fmt.Sprintf("已导出 %d 页到 %s%s", len(pages), outFile, backupNote), nil
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+// exportPrefix 给导出的图片挑一个像样的文件名前缀：用第一个真实来源的文件名。
+// 全是空白页时退回 "export"。
+func exportPrefix(pages []wsPlanPage) string {
+	for _, p := range pages {
+		if p.Path == "" {
+			continue
+		}
+		base := filepath.Base(p.Path)
+		if stem := strings.TrimSuffix(base, filepath.Ext(base)); stem != "" {
+			return stem
+		}
+	}
+	return "export"
+}
+
+func copyFile(src, dst string) error {	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}

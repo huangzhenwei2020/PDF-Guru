@@ -33,8 +33,8 @@ from watermark import (detect_watermark_index_helper,
                        remove_watermark_by_index, remove_watermark_by_text,
                        remove_watermark_by_type, watermark_pdf_by_image,
                        watermark_pdf_by_pdf, watermark_pdf_by_text)
-from workspace import (workspace_build, workspace_convert, workspace_info,
-                       workspace_merge_images, workspace_render)
+from workspace import (workspace_build, workspace_convert, workspace_export,
+                       workspace_info, workspace_merge_images, workspace_render)
 
 logger.add(logpath, rotation="1 week", retention="10 days", level="DEBUG", encoding="utf-8")
 
@@ -195,6 +195,9 @@ def main():
         workspace_render(doc_path=args.input_path, pages=args.pages, width=args.width, output_dir=args.output, manifest_path=args.manifest)
     elif args.which == "ws_build":
         workspace_build(plan_path=args.plan, output_path=args.output, compress=args.compress)
+    elif args.which == "ws_export":
+        workspace_export(plan_path=args.plan, output_path=args.output, fmt=args.format,
+                         dpi=args.dpi, compress=args.compress, prefix=args.prefix)
     elif args.which == "ws_convert":
         workspace_convert(input_path=args.input_path, output_path=args.output)
     elif args.which == "ws_merge_images":

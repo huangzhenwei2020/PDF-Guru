@@ -5,7 +5,7 @@ import {
     WorkspaceCacheRoot,
     WorkspaceAddImageSource,
     WorkspaceAddConvertedSource,
-    WorkspaceBuild,
+    WorkspaceExport,
     WorkspaceSetDirty,
     WorkspaceAutoOpenPath,
     WorkspaceAutoOps,
@@ -1059,8 +1059,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
          * 序列化清单供导出。前端只给 docId，真实文件路径由 Go 侧解析——
          * 这样前端始终拿不到本地路径，也不用担心拼接错误。
          */
-        itemsPayload(scope: "all" | "selected"): string {
-            const picked = scope === "selected" ? new Set(this.selected) : null;
+        itemsPayload(ids?: string[] | null): string {
+            const picked = ids ? new Set(ids) : null;
             const items = this.seq
                 .filter((it) => !picked || picked.has(it.id))
                 .map((it) =>
@@ -1078,34 +1078,62 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             return JSON.stringify(items);
         },
 
+        /**
+         * 导出。
+         *
+         * @param outFile  PDF 时是文件路径；导出图片时是**目录**（生成多个文件）
+         * @param opts.ids 要导出的页面 id；不传或传 null 表示全部
+         * @param opts.format  pdf | png | jpg | svg
+         * @param opts.adopt   是否让输出文件成为这份文档的文件（「另存为」用）
+         */
         async exportTo(
             outFile: string,
-            scope: "all" | "selected",
-            compress: boolean,
-            backup: boolean,
-            adopt = false
+            opts: {
+                ids?: string[] | null;
+                compress?: boolean;
+                backup?: boolean;
+                adopt?: boolean;
+                format?: "pdf" | "png" | "jpg" | "svg";
+                dpi?: number;
+            } = {}
         ): Promise<string> {
+            const ids = opts.ids ?? null;
+            const format = opts.format ?? "pdf";
+            const compress = !!opts.compress;
+            const isPDF = format === "pdf";
+
             this.saving = true;
             this.error = "";
             try {
                 const payload = JSON.stringify({
-                    items: JSON.parse(this.itemsPayload(scope)),
+                    items: JSON.parse(this.itemsPayload(ids)),
                     options: this.decorOptions(),
                 });
-                const msg: string = await WorkspaceBuild(payload, outFile, compress, backup);
-                // 输出文件若正好是某个来源，那份来源的内容已经被改写，
-                // 清单里指向它的页下标就失效了，必须重新加载，否则后续导出会串页。
-                // 新建的文档（没有来源）另存为之后，也把输出文件当作它的文件，
-                // 这样「保存」就能用了——与桌面软件"另存为"的直觉一致。
-                // adopt=true（另存为）时无条件接管：用户明确要求"以后就存这里"。
-                const noSource = Object.keys(this.sources).length === 0;
-                const hitSource = Object.values(this.sources).some((s) => s.path === outFile);
-                if (adopt || hitSource || noSource) {
-                    await this.open(outFile);
-                } else if (scope === "all") {
-                    // 全部内容已落盘，视为没有未保存的更改
-                    this.markSaved();
+                const msg: string = await WorkspaceExport(
+                    payload,
+                    outFile,
+                    format,
+                    opts.dpi ?? 150,
+                    compress,
+                    isPDF && (opts.backup ?? true)
+                );
+
+                if (isPDF) {
+                    // 输出文件若正好是某个来源，那份来源的内容已经被改写，
+                    // 清单里指向它的页下标就失效了，必须重新加载，否则后续导出会串页。
+                    // 新建的文档（没有来源）另存为之后，也把输出文件当作它的文件，
+                    // 这样「保存」就能用了——与桌面软件"另存为"的直觉一致。
+                    // adopt=true（另存为）时无条件接管：用户明确要求"以后就存这里"。
+                    const noSource = Object.keys(this.sources).length === 0;
+                    const hitSource = Object.values(this.sources).some((s) => s.path === outFile);
+                    if (opts.adopt || hitSource || noSource) {
+                        await this.open(outFile);
+                    } else if (ids === null) {
+                        // 全部内容已落盘，视为没有未保存的更改
+                        this.markSaved();
+                    }
                 }
+                // 导出图片不改变文档与它自己文件的关系，因此什么都不做
                 return msg;
             } finally {
                 this.saving = false;
@@ -1117,7 +1145,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
          * 之后再按「保存」就写这个新位置，而不是原来那份。
          */
         async saveAsTo(outFile: string, compress = false, backup = true): Promise<string> {
-            return this.exportTo(outFile, "all", compress, backup, true);
+            return this.exportTo(outFile, { adopt: true, compress, backup });
         },
 
         // --- 无人值守验证用的钩子 ------------------------------------------

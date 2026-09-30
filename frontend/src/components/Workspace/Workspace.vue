@@ -405,40 +405,62 @@
                 <span v-if="insError" class="ws-err"> · {{ insError }}</span>
             </div>
         </a-modal>
-        <!-- 导出 -->
-        <a-modal v-model:visible="exportVisible" title="导出 PDF" ok-text="导出" cancel-text="取消"
-            :confirm-loading="store.saving" @ok="doExport">
+        <!-- 导出：可选格式（PDF / 图片 / 矢量）与页面范围 -->
+        <a-modal v-model:visible="exportVisible" :title="'导出为 ' + exportFormat.toUpperCase()" ok-text="导出"
+            cancel-text="取消" :confirm-loading="store.saving" @ok="doExport">
             <a-form layout="vertical">
-                <a-form-item label="输出文件">
+                <a-form-item label="格式">
+                    <a-radio-group v-model:value="exportFormat" button-style="solid">
+                        <a-radio-button value="pdf">PDF</a-radio-button>
+                        <a-radio-button value="png">PNG 图片</a-radio-button>
+                        <a-radio-button value="jpg">JPG 图片</a-radio-button>
+                        <a-radio-button value="svg">SVG 矢量</a-radio-button>
+                    </a-radio-group>
+                </a-form-item>
+                <a-form-item :label="isImageExport ? '输出目录' : '输出文件'">
                     <a-row :gutter="8">
                         <a-col :span="19">
-                            <a-input v-model:value="exportPath" placeholder="输出 PDF 的完整路径" />
+                            <a-input v-model:value="exportPath"
+                                :placeholder="isImageExport ? '图片输出到哪个目录（每页一个文件）' : '输出 PDF 的完整路径'" />
                         </a-col>
                         <a-col :span="5">
                             <a-button @click="pickExportPath">选择…</a-button>
                         </a-col>
                     </a-row>
+                    <div v-if="isImageExport" class="ws-note" style="margin-top: 4px;">
+                        每页导出一个文件，命名为 <code>…-page-序号.png</code>
+                    </div>
                 </a-form-item>
-                <a-form-item label="范围">
+                <a-form-item label="页面范围">
                     <a-radio-group v-model:value="exportScope">
                         <a-radio-button value="all">全部 {{ store.seq.length }} 页</a-radio-button>
                         <a-radio-button value="selected" :disabled="!store.selected.length">
                             仅选中 {{ store.selected.length }} 页
                         </a-radio-button>
+                        <a-radio-button value="range">自定义范围</a-radio-button>
                     </a-radio-group>
+                    <a-input v-if="exportScope === 'range'" v-model:value="exportRange" style="margin-top: 8px;"
+                        placeholder="例如 1-3,5,8-N（N 表示最后一页）" />
                 </a-form-item>
-                <a-form-item style="margin-bottom: 0;">
-                    <a-checkbox v-model:checked="exportCompress">更强的压缩（稍慢）</a-checkbox>
+                <a-form-item v-if="isImageExport" label="分辨率">
+                    <a-input-number v-model:value="exportDpi" :min="36" :max="600" :step="50" />
+                    <span class="ws-note" style="margin-left: 8px;">DPI（越大越清晰、文件越大）</span>
                 </a-form-item>
-                <a-form-item style="margin-bottom: 0;">
-                    <a-checkbox v-model:checked="exportBackup">
-                        目标已存在时先备份为 .bak（只保留最早的一份）
-                    </a-checkbox>
-                </a-form-item>
+                <template v-else>
+                    <a-form-item style="margin-bottom: 0;">
+                        <a-checkbox v-model:checked="exportCompress">更强的压缩（稍慢）</a-checkbox>
+                    </a-form-item>
+                    <a-form-item style="margin-bottom: 0;">
+                        <a-checkbox v-model:checked="exportBackup">
+                            目标已存在时先备份为 .bak（只保留最早的一份）
+                        </a-checkbox>
+                    </a-form-item>
+                </template>
             </a-form>
             <div class="ws-note" style="margin-top: 10px;">
                 将导出 {{ exportCount }} 页
                 <span v-if="exportScope === 'selected'">（只导出选中的页面，工作区其余内容不受影响）</span>
+                <span v-if="exportRangeError" class="ws-err"> · {{ exportRangeError }}</span>
             </div>
         </a-modal>
         <!-- 页面装饰：导出期设置 -->
@@ -629,6 +651,7 @@ import {
 import {
     SelectDir,
     SetClipboard,
+    WorkspacePickDir,
     WorkspacePickFile,
     WorkspacePickFiles,
     WorkspacePickPdfToOpen,
@@ -1397,12 +1420,56 @@ export default defineComponent({
 
         const exportVisible = ref(false);
         const exportPath = ref('');
-        const exportScope = ref<'all' | 'selected'>('all');
+        /** 全部 / 仅选中 / 自定义范围（输入形如 1-3,5,8-N） */
+        const exportScope = ref<'all' | 'selected' | 'range'>('all');
+        const exportRange = ref('');
+        /** 导出格式：PDF 或图片/矢量 */
+        const exportFormat = ref<'pdf' | 'png' | 'jpg' | 'svg'>('pdf');
+        const exportDpi = ref(150);
         const exportCompress = ref(false);
         const exportBackup = ref(true);
 
+        const isImageExport = computed(() => exportFormat.value !== 'pdf');
+
+        /** 自定义范围解析出的位置下标（0-based）；出错时为 null */
+        const exportRangeIdx = computed<number[] | null>(() => {
+            if (exportScope.value !== 'range') return null;
+            try {
+                // parseRange 返回的**已经是 0-based 下标**（别再减 1！），
+                // 支持 1-3,5,8-N（N = 最后一页），与"插入页"共用同一套写法。
+                // 减两次会让下标越界成 undefined，导出自定义范围直接崩。
+                return parseRange(exportRange.value, store.seq.length);
+            } catch (e) {
+                return null;
+            }
+        });
+
+        const exportRangeError = computed(() => {
+            if (exportScope.value !== 'range') return '';
+            if (!exportRange.value.trim()) return '请输入页码范围';
+            try {
+                parseRange(exportRange.value, store.seq.length);
+                return '';
+            } catch (e: any) {
+                return String(e?.message ?? e);
+            }
+        });
+
+        /** 本次要导出的页面 id；null 表示全部 */
+        const exportIds = computed<string[] | null>(() => {
+            if (exportScope.value === 'selected') return store.selected.slice();
+            if (exportScope.value === 'range') {
+                const idx = exportRangeIdx.value;
+                if (!idx) return [];
+                return idx
+                    .filter((i) => i >= 0 && i < store.seq.length)
+                    .map((i) => store.seq[i].id);
+            }
+            return null;
+        });
+
         const exportCount = computed(() =>
-            exportScope.value === 'selected' ? store.selected.length : store.seq.length
+            exportIds.value === null ? store.seq.length : exportIds.value.length
         );
 
         /** 由当前文档名推一个默认文件名，给文件对话框当初始值 */
@@ -1432,7 +1499,7 @@ export default defineComponent({
         /** 把合并结果整体写回主来源文件。多来源时会先确认，因为它会改动原文件。 */
         const runSave = async (target: string) => {
             try {
-                const msg = await store.exportTo(target, 'all', false, true);
+                const msg = await store.exportTo(target, { backup: true });
                 message.success(msg);
             } catch (e: any) {
                 fail(e);
@@ -1463,20 +1530,37 @@ export default defineComponent({
         };
 
         const openExport = () => {
-            if (!exportPath.value) {
-                const p = store.mainPath;
-                exportPath.value = p ? p.replace(/\.pdf$/i, '') + '-导出.pdf' : '';
-            }
             // 只选了一部分页时，默认导出选中的部分，符合"我选它就是要它"的直觉
             exportScope.value =
                 store.selected.length > 0 && store.selected.length < store.seq.length ? 'selected' : 'all';
+            if (!exportScope.value || exportScope.value === 'all') {
+                exportRange.value = '';
+            }
+            refreshExportPath();
             exportVisible.value = true;
+        };
+
+        /** 输出路径随格式变化：PDF 是文件，图片是目录 */
+        const refreshExportPath = () => {
+            const p = store.mainPath;
+            const dir = p ? p.replace(/[\\/][^\\/]*$/, '') : '';
+            if (exportFormat.value === 'pdf') {
+                exportPath.value = p ? p.replace(/\.pdf$/i, '') + '-导出.pdf' : '';
+            } else {
+                // 图片会生成多个文件，所以目标是目录
+                exportPath.value = dir;
+            }
         };
 
         const pickExportPath = async () => {
             try {
-                const p: string = await WorkspaceSaveDialog('导出 PDF', suggestName('-导出'));
-                if (p) exportPath.value = p;
+                if (isImageExport.value) {
+                    const d: string = await WorkspacePickDir('选择导出目录');
+                    if (d) exportPath.value = d;
+                } else {
+                    const p: string = await WorkspaceSaveDialog('导出 PDF', suggestName('-导出'));
+                    if (p) exportPath.value = p;
+                }
             } catch (e: any) {
                 fail(e);
             }
@@ -1484,22 +1568,36 @@ export default defineComponent({
 
         const doExport = async () => {
             if (!exportPath.value.trim()) {
-                message.error('请先指定输出文件');
+                message.error(isImageExport.value ? '请先指定输出目录' : '请先指定输出文件');
+                return;
+            }
+            if (exportRangeError.value) {
+                message.error(exportRangeError.value);
+                return;
+            }
+            if (exportScope.value === 'range' && !exportCount.value) {
+                message.error('页码范围里没有任何页面');
                 return;
             }
             try {
-                const msg = await store.exportTo(
-                    exportPath.value.trim(),
-                    exportScope.value,
-                    exportCompress.value,
-                    exportBackup.value
-                );
+                const msg = await store.exportTo(exportPath.value.trim(), {
+                    ids: exportIds.value,
+                    compress: exportCompress.value,
+                    backup: exportBackup.value,
+                    format: exportFormat.value,
+                    dpi: exportDpi.value,
+                });
                 message.success(msg);
                 exportVisible.value = false;
             } catch (e: any) {
                 fail(e);
             }
         };
+
+        // 换格式时输出目标的意义变了（文件 <-> 目录），跟着刷新默认值
+        watch(exportFormat, () => {
+            if (exportVisible.value) refreshExportPath();
+        });
 
         // --- 页面装饰（导出期设置）----------------------------------------
 
@@ -2013,6 +2111,11 @@ export default defineComponent({
             exportCompress,
             exportBackup,
             exportCount,
+            exportFormat,
+            exportRange,
+            exportDpi,
+            isImageExport,
+            exportRangeError,
             // 页面装饰
             decorVisible,
             removeAnnotsMarked,

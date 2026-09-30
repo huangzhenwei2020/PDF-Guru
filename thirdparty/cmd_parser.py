@@ -411,4 +411,19 @@ def getParser():
     ws_merge_images_parser.add_argument("input_path_list", type=str, nargs="+", help="图片路径列表")
     ws_merge_images_parser.add_argument("-o", "--output", type=str, required=True, help="输出 PDF 路径")
 
+    # ws-export: 按清单导出为 PDF 或图片（png/jpg/svg）
+    ws_export_parser = sub_parsers.add_parser("ws-export", help="工作区: 导出为 PDF 或图片")
+    ws_export_parser.set_defaults(which="ws_export")
+    ws_export_parser.add_argument("plan", type=str, help="清单 JSON 路径")
+    ws_export_parser.add_argument("-o", "--output", type=str, required=True,
+                                 help="输出文件路径（导出图片时是输出目录）")
+    ws_export_parser.add_argument("--format", type=str, default="pdf",
+                                 choices=["pdf", "png", "jpg", "jpeg", "svg"], help="输出格式")
+    ws_export_parser.add_argument("--dpi", type=int, default=150,
+                                 help="导出图片时的分辨率（36~600）")
+    ws_export_parser.add_argument("--compress", action="store_true",
+                                 help="更强的压缩（仅 PDF 生效）")
+    ws_export_parser.add_argument("--prefix", type=str, default="",
+                                 help="导出图片时的文件名前缀（默认用清单名）")
+
     return parser

@@ -17,6 +17,7 @@
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import traceback
@@ -345,8 +346,13 @@ def _apply_decor(writer, options, tmpdir):
             ov.close()
 
 
-def workspace_build(plan_path: str, output_path: str, compress: bool = False):
-    """按清单合成 PDF —— 工作区所有编辑真正落盘的地方。
+def _build_pdf(plan_path: str, output_path: str, compress: bool = False):
+    """按清单合成 PDF（内部实现）。失败时**抛异常**，由调用方决定怎么报。
+
+    与 workspace_build 分开，是因为导出成图片时也要先合成 PDF——
+    若这里自己吞掉异常并写状态文件，调用方就没法知道到底成没成。
+
+    原说明：按清单合成 PDF —— 工作区所有编辑真正落盘的地方。
 
     清单由 Go 侧生成，其中：页码已经是 0-based 下标、docId 已经解析成真实文件路径。
     Python 这边因此不需要理解工作区的任何概念，只负责按顺序拼页。
@@ -459,11 +465,85 @@ def workspace_build(plan_path: str, output_path: str, compress: bool = False):
                     pass
 
         os.replace(tmp, output_path)
-        utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
-    except Exception as e:
+    except Exception:
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
         except Exception:
             pass
+        raise
+
+
+def workspace_build(plan_path: str, output_path: str, compress: bool = False):
+    """按清单合成 PDF（命令入口）。"""
+    try:
+        _build_pdf(plan_path, output_path, compress)
+        utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+    except Exception as e:
+        _fail(e)
+
+
+# 导出成图片/矢量时支持的扩展名。
+# PyMuPDF 是按扩展名判断输出格式的，所以这里的键必须就是真实扩展名。
+_EXPORT_IMAGE_EXT = {"png": ".png", "jpg": ".jpg", "jpeg": ".jpg", "svg": ".svg"}
+
+
+def workspace_export(plan_path: str, output_path: str, fmt: str = "pdf",
+                     dpi: int = 150, compress: bool = False, prefix: str = ""):
+    """按清单导出：PDF 直接合成；图片/矢量先合成 PDF 再逐页渲染。
+
+    所有格式都走"先合成 PDF"这一条路，是为了让裁剪、遮盖、空白页、旋转、
+    以及水印/页码这些装饰与 PDF 导出的结果**完全一致**。
+    另写一套渲染逻辑迟早会跟 PDF 侧对不上，而"两种导出看起来不一样"极难排查。
+
+    output_path：fmt=pdf 时是要写入的文件路径；导出图片时是要写入的**目录**。
+    prefix：图片文件名前缀。不传就用清单文件名——但那是内部临时文件名（build-4），
+    给用户看很奇怪，所以调用方应当传一个像样的前缀（例如源文档名）。
+    """
+    try:
+        fmt = (fmt or "pdf").strip().lower()
+        if fmt == "pdf":
+            _build_pdf(plan_path, output_path, compress)
+            utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+            return
+
+        ext = _EXPORT_IMAGE_EXT.get(fmt)
+        if ext is None:
+            raise ValueError(f"不支持的导出格式：{fmt}")
+
+        out_dir = Path(output_path)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        tmpdir = tempfile.mkdtemp(prefix="pdfguru-wsexport-")
+        try:
+            tmp_pdf = os.path.join(tmpdir, "src.pdf")
+            _build_pdf(plan_path, tmp_pdf, False)
+
+            doc = fitz.open(tmp_pdf)
+            try:
+                stem = (prefix or Path(plan_path).stem).strip() or "export"
+                # 文件名里不能出现路径分隔符或 Windows 保留字符
+                stem = re.sub(r'[\\/:*?"<>|]+', "_", stem) or "export"
+                dpi = max(36, min(600, int(dpi or 150)))
+                zoom = dpi / 72.0
+                matrix = fitz.Matrix(zoom, zoom)
+                for i in range(doc.page_count):
+                    page = doc[i]
+                    if ext == ".svg":
+                        svg = page.get_svg_image(matrix=matrix)
+                        (out_dir / f"{stem}-page-{i + 1}.svg").write_text(svg, encoding="utf-8")
+                    else:
+                        pix = page.get_pixmap(matrix=matrix)
+                        pix.set_dpi(dpi, dpi)
+                        data = pix.tobytes("jpeg" if ext == ".jpg" else "png")
+                        (out_dir / f"{stem}-page-{i + 1}{ext}").write_bytes(data)
+                if doc.page_count == 0:
+                    raise ValueError("清单里没有任何页面，已取消导出")
+            finally:
+                doc.close()
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+    except Exception as e:
         _fail(e)
