@@ -4,6 +4,7 @@ import {
     WorkspaceThumbs,
     WorkspaceCacheRoot,
     WorkspaceAddImageSource,
+    WorkspaceAddOfficeSource,
     WorkspaceAddConvertedSource,
     WorkspaceExport,
     WorkspaceSetDirty,
@@ -467,11 +468,31 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             return docId;
         },
 
-        /** 按扩展名选择登记方式。PDF 直接用，图片合并，其余尝试转换。 */
+        /**
+         * 把 Office 文档（Word / PowerPoint / Excel）转成 PDF 并登记为来源。
+         *
+         * 转换靠本机安装的 Office（Go 侧调 office2pdf.ps1 走 COM），
+         * 所以要几秒到十几秒——这也是拖入 Office 文件会明显卡一下的原因。
+         */
+        async registerOfficeSource(path: string): Promise<string> {
+            const info: any = await WorkspaceAddOfficeSource(path);
+            const docId: string = info?.docId ?? "";
+            if (!docId) throw new Error("Office 转换失败");
+            this.sources[docId] = {
+                docId,
+                path: info?.path ?? path,
+                pageCount: info?.pageCount ?? 0,
+                pages: info?.pages ?? [],
+            };
+            return docId;
+        },
+
+        /** 按扩展名选择登记方式。PDF 直接用，图片合并，Office 借本机 Office，其余尝试转换。 */
         async registerAny(path: string): Promise<string> {
             const ext = extOf(path);
             if (ext === "pdf") return this.registerSource(path);
             if (IMAGE_EXTS.includes(ext)) return this.registerImageSource([path]);
+            if (OFFICE_EXTS.includes(ext)) return this.registerOfficeSource(path);
             return this.registerConvertedSource(path);
         },
 
@@ -920,20 +941,19 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             at?: number
         ): Promise<{ inserted: number; errors: string[] }> {
             const errors: string[] = [];
-            const groups: { kind: "pdf" | "images" | "doc"; paths: string[] }[] = [];
+            const groups: { kind: "pdf" | "images" | "doc" | "office"; paths: string[] }[] = [];
 
             for (const p of paths) {
                 const ext = extOf(p);
-                if (OFFICE_EXTS.includes(ext)) {
-                    errors.push(`${baseName(p)}：Office 文档无法直接转换，请先另存为 PDF`);
-                    continue;
-                }
                 if (ext === "pdf") {
                     groups.push({ kind: "pdf", paths: [p] });
                 } else if (IMAGE_EXTS.includes(ext)) {
                     const last = groups[groups.length - 1];
                     if (last && last.kind === "images") last.paths.push(p);
                     else groups.push({ kind: "images", paths: [p] });
+                } else if (OFFICE_EXTS.includes(ext)) {
+                    // Word/PPT/Excel 交给本机 Office 转 PDF；逐个转，方便单独报错
+                    groups.push({ kind: "office", paths: [p] });
                 } else {
                     groups.push({ kind: "doc", paths: [p] });
                 }
@@ -950,7 +970,9 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                             ? await this.registerSource(g.paths[0])
                             : g.kind === "images"
                               ? await this.registerImageSource(g.paths)
-                              : await this.registerConvertedSource(g.paths[0]);
+                              : g.kind === "office"
+                                ? await this.registerOfficeSource(g.paths[0])
+                                : await this.registerConvertedSource(g.paths[0]);
                     const src = this.sources[docId];
                     for (let i = 0; i < src.pageCount; i++) {
                         items.push(createPageItem(docId, i));

@@ -106,6 +106,16 @@ foreach ($f in 'ocr.py', 'convert_external.py') {
     if (Test-Path $src) { Copy-Item $src (Join-Path $binDir $f) -Force }
 }
 
+# Office -> PDF 的 PowerShell 脚本：它要和 exe 放在一起（Go 侧按 exe 目录找它）。
+# 用 PowerShell + COM 而不是 Python 库，是因为外部脚本跑的是**用户自己的 Python**，
+# 而 PowerShell 和能不能调 COM 都是系统自带、无需额外依赖。
+$officePs = Join-Path $repo 'office2pdf.ps1'
+if (Test-Path $officePs) {
+    Copy-Item $officePs (Join-Path $binDir 'office2pdf.ps1') -Force
+} else {
+    Write-Warning "没有找到 office2pdf.ps1，Office 文档将无法拖入转换"
+}
+
 Write-Output "`n完成，产物："
 Get-ChildItem $binDir |
     Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } }, LastWriteTime |

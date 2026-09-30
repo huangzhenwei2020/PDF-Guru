@@ -869,6 +869,43 @@ wails_runtime.OpenFileDialog(a.ctx, wails_runtime.OpenDialogOptions{})   // 全�
 回归全绿：Go 单测、后端 36/36、模型 87/87、导出引擎 31/31、DXF 16/16、装饰 8/8、
 拖入插入、关闭确认。
 
+### 计划外补充：Word / PPT / Excel 可以直接拖进来（用户提出）
+
+用户要求"像 word 和 ppt 这种应该也可以直接拖进来使用"。
+
+**为什么必须借外部程序**：PyMuPDF 只认 PDF/XPS/EPUB/MOBI/FB2/CBZ/SVG 和图片，
+打不开 Office 格式。三条可选路径：
+
+1. LibreOffice 无头转换——最省事，但这台机器上没装；
+2. Python 的 pywin32 调 COM——外部脚本跑的是**用户自己的 Python**（不是随包分发的那份），
+   依赖不可控，venv 里也确实没装 pywin32；
+3. **PowerShell 直接调 COM**——Windows 自带 PowerShell，不需要任何额外依赖。
+
+选了第 3 条：新增 `office2pdf.ps1`（随包分发到 exe 同目录），Go 侧 `office_win.go`
+按扩展名分派给 Word / PowerPoint / Excel。
+
+**两个必须注意的坑，都踩到了：**
+
+**(1) 脚本必须带 UTF-8 BOM。** Windows PowerShell 5.1 在没有 BOM 时**按 ANSI(GBK) 读 .ps1**，
+脚本里的中文注释被解成乱码后会把解析器搞坏——症状是 `$procName` 悄悄变成空值，
+报 `Cannot validate argument on parameter 'Name'`。**从现象完全联想不到编码问题。**
+定位过程：先用 `pwsh`(7) 测是好的、用 `powershell.exe`(5.1，也就是应用实际调的那个)才复现；
+再用一个纯 ASCII 的探针脚本确认语法在 5.1 上都没问题；最后扫字节发现脚本里有 429 个
+非 ASCII 字节。修法是写成 UTF-8 **带 BOM**，并把 `[Console]::OutputEncoding` 设为 UTF-8
+（否则 PowerShell 用 GBK 写 stderr，Go 按 UTF-8 读回来是乱码，报错信息没法看）。
+
+**(2) Word/Excel 的 COM 是单实例的。** `New-Object -ComObject Word.Application`
+在用户已经开着 Word 时会**返回他那个实例**，此时 `Quit()` 会把他的文档一起关掉。
+所以先用 `GetActiveObject` 判断是否已有实例，有就绝不 Quit。另外 Office 自动化容易留下
+后台进程（Excel 尤其顽固，Quit 常因还有引用而不生效），所以开工前记下同类进程的 PID，
+收尾时只清理**这期间新出现且没有主窗口**的那些——用户自己的实例绝不会被误杀。
+
+**验证**：`_smoke/ws/verify-office.py`（14 条断言）：脚本带 BOM、三种格式都能转
+（Word 1 页 612x792pt / PowerPoint **3 页 960x540pt** / Excel 1 页 595x842pt）、
+产物非空、**不留孤儿 Office 进程**、未知扩展名退出码为 2 且不产出半成品。
+应用侧实测：拖 pptx 进工作区后状态栏显示 `第 6/8 页 · 已选 3 页 · 2 个来源`，
+三种格式的页面尺寸都正确（并且顺手验证了上一节的"按真实尺寸显示"对混合尺寸同样成立）。
+
 ### Phase 6 —— 打磨
 
 - [x] 大文档性能：**按可见区渐进渲染**

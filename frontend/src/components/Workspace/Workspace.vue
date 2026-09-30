@@ -46,6 +46,7 @@
                         <a-menu-item key="pdf">从 PDF 插入页面…</a-menu-item>
                         <a-menu-item key="append">追加整个 PDF…</a-menu-item>
                         <a-menu-item key="images">插入图片…</a-menu-item>
+                        <a-menu-item key="office">插入 Word / PPT / Excel…</a-menu-item>
                         <a-menu-divider />
                         <a-menu-item key="keep">仅保留选中页</a-menu-item>
                         <a-menu-item key="invert">反选</a-menu-item>
@@ -315,7 +316,10 @@
                         <template v-if="store.seq.length">选择左侧任意一页查看大图</template>
                         <template v-else>
                             把 PDF 拖进窗口即可打开<br />
-                            <small class="ws-hint-sub">也可以点左上角「打开 PDF」；拖入多个会合并成一份</small>
+                            <small class="ws-hint-sub">
+                          也可以点左上角「打开 PDF」；拖入多个会合并成一份<br />
+                          PDF、图片、Word / PPT / Excel 都能直接拖进来（Office 文档会用本机 Office 转成 PDF，需要几秒）
+                      </small>
                         </template>
                     </div>
                 </div>
@@ -1485,6 +1489,25 @@ export default defineComponent({
                 }
                 return;
             }
+            if (key === 'office') {
+                try {
+                    const ps: string[] = await WorkspacePickFiles('选择 Word / PPT / Excel 文档', 'office');
+                    if (!ps || !ps.length) return;
+                    // 转 PDF 要几秒到十几秒，给个提示免得用户以为卡死了
+                    const hide = message.loading('正在用本机 Office 转换为 PDF…', 0);
+                    try {
+                        for (const p of ps) {
+                            const docId = await store.registerOfficeSource(p);
+                            store.appendSource(docId);
+                        }
+                    } finally {
+                        hide();
+                    }
+                } catch (e: any) {
+                    fail(e);
+                }
+                return;
+            }
         };
 
         // --- 保存与导出 ---------------------------------------------------
@@ -1841,7 +1864,18 @@ export default defineComponent({
             // 记住这次拖进来的位置：紧接着弹文件对话框（另存为/导出）时会从那里开始
             void WorkspaceRememberDir(paths[0]);
             try {
-                const res = await store.insertDroppedFiles(paths, at);
+                // Office 文档要借本机 Office 转 PDF，一个文件好几秒，先给个提示，
+                // 否则用户会以为拖进来没反应。
+                const hasOffice = paths.some((p) =>
+                    /\.(docx?|docm|rtf|odt|txt|pptx?|pptm|odp|xlsx?|xlsm|xlsb|ods|csv)$/i.test(p)
+                );
+                const hide = hasOffice ? message.loading('正在用本机 Office 转换为 PDF…', 0) : null;
+                let res;
+                try {
+                    res = await store.insertDroppedFiles(paths, at);
+                } finally {
+                    hide?.();
+                }
                 if (res.inserted) {
                     message.success(`已插入 ${res.inserted} 页`);
                 }
