@@ -426,4 +426,14 @@ def getParser():
     ws_export_parser.add_argument("--prefix", type=str, default="",
                                  help="导出图片时的文件名前缀（默认用清单名）")
 
+    # office-render: 用内置渲染器把 docx/pptx/xlsx 转成 PDF（不依赖本机 Office）
+    office_parser = sub_parsers.add_parser(
+        "office-render", help="内置渲染器: Office 文档 -> PDF（无需安装 Office）")
+    office_parser.set_defaults(which="office_render")
+    office_parser.add_argument("input_path", type=str, help="Office 文档路径")
+    office_parser.add_argument("-o", "--output", type=str, required=True, help="输出 PDF 路径")
+    office_parser.add_argument("--kind", type=str, default="",
+                               choices=["", "word", "ppt", "excel"],
+                               help="文档类别（默认按扩展名判断）")
+
     return parser

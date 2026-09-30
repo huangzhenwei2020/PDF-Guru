@@ -1494,11 +1494,13 @@ export default defineComponent({
                     const ps: string[] = await WorkspacePickFiles('选择 Word / PPT / Excel 文档', 'office');
                     if (!ps || !ps.length) return;
                     // 转 PDF 要几秒到十几秒，给个提示免得用户以为卡死了
-                    const hide = message.loading('正在用本机 Office 转换为 PDF…', 0);
+                    const hide = message.loading('正在转换 Office 文档为 PDF…', 0);
                     try {
                         for (const p of ps) {
                             const docId = await store.registerOfficeSource(p);
                             store.appendSource(docId);
+                            const note = store.sources[docId]?.note;
+                            if (note) message.info(note, 8);
                         }
                     } finally {
                         hide();
@@ -1869,7 +1871,7 @@ export default defineComponent({
                 const hasOffice = paths.some((p) =>
                     /\.(docx?|docm|rtf|odt|txt|pptx?|pptm|odp|xlsx?|xlsm|xlsb|ods|csv)$/i.test(p)
                 );
-                const hide = hasOffice ? message.loading('正在用本机 Office 转换为 PDF…', 0) : null;
+                const hide = hasOffice ? message.loading('正在转换 Office 文档为 PDF…', 0) : null;
                 let res;
                 try {
                     res = await store.insertDroppedFiles(paths, at);
@@ -1878,6 +1880,9 @@ export default defineComponent({
                 }
                 if (res.inserted) {
                     message.success(`已插入 ${res.inserted} 页`);
+                }
+                if (res.notes?.length) {
+                    message.info(res.notes.join('；'), 8);
                 }
                 if (res.errors.length) {
                     message.error(res.errors.join('；'), 6);
@@ -2136,6 +2141,13 @@ export default defineComponent({
                                     out.push(
                                         `  p${i + 1} ${pi ? `${pi.width.toFixed(1)}x${pi.height.toFixed(1)}` : 'blank'}` +
                                         ` rot=${it.kind === 'page' ? it.rotation || 0 : 0}`
+                                    );
+                                });
+                                out.push('来源:');
+                                Object.values(store.sources).forEach((s: any, i) => {
+                                    out.push(
+                                        `  #${i + 1} ${String(s.path).split(/[\\/]/).pop()} 页数=${s.pageCount}` +
+                                        ` note=${JSON.stringify(s.note ?? '')}`
                                     );
                                 });
                                 out.push('缩略图行(渲染px):');

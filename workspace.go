@@ -89,6 +89,9 @@ type WSDocInfo struct {
 	Path      string       `json:"path"`
 	PageCount int          `json:"pageCount"`
 	Pages     []WSPageInfo `json:"pages"`
+	// Note 是给界面看的补充说明，例如"这份文档是用内置渲染器转的"。
+	// 为空表示没什么要额外交代的。
+	Note string `json:"note"`
 }
 
 // WSThumb 是缩略图清单里的一项，已换算成前端可直接使用的 URL。

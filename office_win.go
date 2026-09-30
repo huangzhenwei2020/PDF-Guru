@@ -69,7 +69,11 @@ func officeScriptPath() (string, error) {
 	return "", errors.New("找不到 office2pdf.ps1（它应当与程序放在同一目录）")
 }
 
-// WorkspaceAddOfficeSource 用本机 Office 把文档转成 PDF，再登记为页面来源。
+// WorkspaceAddOfficeSource 把 Office 文档转成 PDF，再登记为页面来源。
+//
+// 两级策略：**先用本机 Office（COM）**，版式最接近原稿；
+// 没有 Office（或 COM 失败）时退回**内置渲染器**（纯 Python 解析 OOXML 画 PDF），
+// 保证一台没装任何办公软件的机器也能用。走的是哪条会写进 Note，界面据此提示。
 func (a *App) WorkspaceAddOfficeSource(path string) (WSDocInfo, error) {
 	var info WSDocInfo
 	wsInit()
@@ -86,12 +90,58 @@ func (a *App) WorkspaceAddOfficeSource(path string) (WSDocInfo, error) {
 	if err != nil {
 		return info, err
 	}
-	if err := convertOfficeToPDF(path, outPDF); err != nil {
+	note, err := a.convertOfficeFile(path, outPDF)
+	if err != nil {
 		// 半成品清掉，免得占着缓存目录还让人以为转成功了
 		_ = os.Remove(outPDF)
 		return info, err
 	}
-	return a.registerDoc(outPDF)
+	info, err = a.registerDoc(outPDF)
+	if err != nil {
+		return info, err
+	}
+	info.Note = note
+	return info, nil
+}
+
+// convertOfficeFile 依次尝试 COM 与内置渲染器，返回给界面看的补充说明。
+func (a *App) convertOfficeFile(src, outPDF string) (string, error) {
+	comErr := convertOfficeToPDF(src, outPDF)
+	if comErr == nil {
+		return "", nil
+	}
+	logger.Warnf("本机 Office 转换失败，改用内置渲染器: %v\n", comErr)
+	_ = os.Remove(outPDF)
+
+	builtinErr := a.convertOfficeBuiltin(src, outPDF)
+	if builtinErr == nil {
+		return "未检测到可用的本机 Office，已用内置渲染器转换（版式可能与原稿有差异）", nil
+	}
+	logger.Errorf("内置渲染器也失败: %v\n", builtinErr)
+	// COM 的报错通常更有信息量（例如"没装 Office"），两个都带上
+	return "", fmt.Errorf("转换 %s 失败。\n本机 Office：%v\n内置渲染器：%v",
+		filepath.Base(src), comErr, builtinErr)
+}
+
+// convertOfficeBuiltin 调 pdf.exe 的 office-render（纯 Python 渲染，不需要 Office）。
+func (a *App) convertOfficeBuiltin(src, outPDF string) error {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(src), "."))
+	kind := officeExts[ext]
+	args := []string{"office-render", src, "--output", outPDF}
+	if kind != "" {
+		args = append(args, "--kind", kind)
+	}
+	err := a.cmdRunner(args, "pdf")
+	// DocumentWriter 写出的中间文件的句柄要到**进程退出**才释放（实测 6 秒都删不掉），
+	// 所以清理只能放在这里——此刻子进程已经结束了。
+	_ = os.Remove(outPDF + ".raw")
+	if err != nil {
+		return err
+	}
+	if fi, statErr := os.Stat(outPDF); statErr != nil || fi.Size() == 0 {
+		return errors.New("内置渲染器没有产出文件")
+	}
+	return nil
 }
 
 // convertOfficeToPDF 调 office2pdf.ps1，并把退出码翻译成用户看得懂的话。

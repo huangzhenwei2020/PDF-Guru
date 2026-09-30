@@ -54,6 +54,8 @@ export type WSSource = {
     path: string;
     pageCount: number;
     pages: WSPage[];
+    /** 转换方式的补充说明（例如"已用内置渲染器转换"）；没有就是空 */
+    note?: string;
 };
 
 const THUMB_WIDTH = 150;
@@ -483,6 +485,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 path: info?.path ?? path,
                 pageCount: info?.pageCount ?? 0,
                 pages: info?.pages ?? [],
+                note: info?.note ?? "",
             };
             return docId;
         },
@@ -939,8 +942,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         async insertDroppedFiles(
             paths: string[],
             at?: number
-        ): Promise<{ inserted: number; errors: string[] }> {
+        ): Promise<{ inserted: number; errors: string[]; notes: string[] }> {
             const errors: string[] = [];
+            /** 不是错误、但要告诉用户的事，例如"没装 Office，用了内置渲染器" */
+            const notes: string[] = [];
             const groups: { kind: "pdf" | "images" | "doc" | "office"; paths: string[] }[] = [];
 
             for (const p of paths) {
@@ -974,6 +979,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                                 ? await this.registerOfficeSource(g.paths[0])
                                 : await this.registerConvertedSource(g.paths[0]);
                     const src = this.sources[docId];
+                    if (src?.note) notes.push(src.note);
                     for (let i = 0; i < src.pageCount; i++) {
                         items.push(createPageItem(docId, i));
                     }
@@ -989,7 +995,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 // 往空工作区里拖文件，语义上是"打开"而不是"改动"，因此不算未保存
                 if (wasEmpty) this.markSaved();
             }
-            return { inserted: items.length, errors };
+            return { inserted: items.length, errors, notes };
         },
 
         // --- 保存与导出（Phase 4）-----------------------------------------

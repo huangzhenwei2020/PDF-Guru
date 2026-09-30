@@ -1,11 +1,14 @@
 import utils
+import sys
+import traceback
+from officedoc import builtin_office_to_pdf
 from annot import delete_annot_pdf
 from background import add_doc_background_by_color, add_doc_background_by_image
 from bookmark import (add_toc_by_gap, add_toc_from_file, extract_toc,
                       find_title_by_rect_annot, transform_toc_file)
 from cmd_parser import getParser
 from compress import compress_pdf
-from constants import logpath
+from constants import logpath, cmd_output_path
 from convert import (convert_anydoc2pdf, convert_pdf2png, convert_pdf2svg,
                      convert_png2pdf, convert_svg2pdf, convert_to_image_pdf)
 from crop import (crop_pdf_by_bbox, crop_pdf_by_page_margin,
@@ -200,6 +203,17 @@ def main():
                          dpi=args.dpi, compress=args.compress, prefix=args.prefix)
     elif args.which == "ws_convert":
         workspace_convert(input_path=args.input_path, output_path=args.output)
+    elif args.which == "office_render":
+        # 内置渲染器：不依赖本机 Office，直接把 docx/pptx/xlsx 画成 PDF。
+        # 失败时把原因写进状态文件（Go 侧读它），并用非零退出码让调用方知道。
+        try:
+            info = builtin_office_to_pdf(args.input_path, args.output, kind=args.kind)
+            utils.dump_json(cmd_output_path, {"status": "success",
+                                              "message": str(info.get("warnings") or "")})
+        except Exception as e:
+            logger.error(traceback.format_exc())
+            utils.dump_json(cmd_output_path, {"status": "error", "message": str(e)})
+            sys.exit(1)
     elif args.which == "ws_merge_images":
         workspace_merge_images(input_paths=args.input_path_list, output_path=args.output)
 
