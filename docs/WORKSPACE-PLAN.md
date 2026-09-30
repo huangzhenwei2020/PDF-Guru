@@ -796,13 +796,35 @@ wails_runtime.OpenFileDialog(a.ctx, wails_runtime.OpenDialogOptions{})   // 全�
 矢量件合法性（ezdxf 读回 + `audit()` 0 错误）、中文编码合规、
 无矢量内容时明确报错且不产出文件。
 
-**关于"双击 .dxf 打不开"**：查下来是用户机器上的关联问题，不是导出问题——
-`.dxf` 的 `HKCU\Software\Classes\.dxf` 指向 `AutoCADDrawingInterchange.24`，
-命令是直接调用 `AutoCAD 2022\acad.exe`，而那次启动只弹出一个"按 ENTER 键继续"的
-控制台窗口；同一台机器上 `.dwg` 走的是 `AcLauncher.exe /O "%1"`（AutoCAD 2026），
-是正常的。所以这是该机器上 AutoCAD 的启动/关联问题，与 DXF 文件本身无关
-（文件已用 ezdxf 验证合法）。可行做法是在 AutoCAD 里用 `OPEN` 命令打开，
-或把 `.dxf` 关联改成与 `.dwg` 一致的 `AcLauncher.exe`。
+**关于"双击 .dxf 打不开"**（结论修正过一次，记下来）：
+
+一开始我判断成"用户机器上 AutoCAD 的启动问题"，**这是错的**。实际逐层排查后是：
+
+- `.dxf` 的 `HKCU\Software\Classes\.dxf` 指向 `AutoCADDrawingInterchange.24` ✓ 没错；
+- 但同一个键下面挂着一个**畸形的** `OpenWithprogids` 子键（注意是小写 p），
+  里面四条 `acad.5101.804 / .7101 /.9101 / .D001` 的值**全是空的**。
+  **就是这个子键让 Windows 认定"用户还没做选择"，于是每次双击都弹「选取应用」。**
+- `.dwg` 之所以正常，是因为它有 `FileExts\.dwg\UserChoice`，绕开了这条路径。
+
+**验证方式**（每一步都用 ShellExecute 实测，不用猜）：
+1. 新建一个一次性扩展名 `.pdz` -> 记事本，**没有 UserChoice 也能直接打开** ——
+   证明 UserChoice 并不是必须的，我先前"必须有 UserChoice"的假设被推翻。
+2. 把 `.dxf` 的默认 ProgId 临时指向记事本，**照样弹框** —— 说明问题在扩展名这一层，
+   与 AutoCAD 无关。
+3. 删掉 `FileExts\.dxf`、重启 Explorer，都没用；
+4. **把整个 `HKCU\Software\Classes\.dxf` 删掉重建、只留一个默认值** —— 立刻成功：
+   `Autodesk AutoCAD 2022 - [（电）贺州学院厂房-2023.10.25-中文修正.dxf]`。
+
+顺带修掉的两个真问题：
+- `AutoCADDrawingInterchange.24` 的 `shell\open\command` 原本直接调
+  `AutoCAD 2022\acad.exe`，并且带一个 `ddeexec`；已改为与 `.dwg` 一致的
+  `AcLauncher.exe /O "%1"` 并去掉 `ddeexec`。
+- 四个 `acad.*.804` 的命令行**都只有 exe、没有 `"%1"`**，文件名只靠 DDE 传递。
+  DDE 谈不拢就变成"AutoCAD 启动了但没打开文件"——这正是用户说的
+  "回车后没有打开任何东西"。已给四条命令都补上 `"%1"`（DDE 保留，两条路都能走）。
+
+注册表备份在 `H:\PDF软件\dist\reg-backup\`。这些都是**用户机器上的环境修复**，
+不属于项目代码。
 
 ### Phase 6 —— 打磨
 
