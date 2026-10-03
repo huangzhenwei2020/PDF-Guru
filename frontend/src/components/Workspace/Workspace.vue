@@ -1,177 +1,78 @@
 <template>
-    <div class="ws">
-        <!--
-            顶栏：文件与文档级操作。
-            刻意只有一行、按钮用 size="small" —— 旧版把十几个控件挤在一行里，
-            在 1280 宽度下会换行成两行，白吃掉七十多像素高度。
-            页面级工具（视图模式、缩放、裁剪/遮盖）挪到画布上的浮动工具条，
-            那里离内容更近，也更符合文档类软件的习惯。
-        -->
-        <header class="ws-top">
-            <a-button size="small" @click="$emit('open-toolbox')">
-                <template #icon>
-                    <appstore-outlined />
-                </template>
-                工具箱
-            </a-button>
-
+    <div class="ws" :class="{ 'ws-compact': store.compactMode }">
+        <header class="ws-appbar">
+            <img class="ws-logo" :src="appIcon" alt="PDF Guru" />
+            <strong class="ws-brand">PDF Guru</strong>
             <span class="ws-sep"></span>
-
-            <a-tooltip title="新建一份只有空白页的文档，再用「插入」把 PDF 的页面取进来">
-                <a-button size="small" :disabled="store.loading" @click="askNew">
-                    <template #icon>
-                        <file-add-outlined />
-                    </template>
-                    新建
-                </a-button>
-            </a-tooltip>
-            <a-button size="small" type="primary" :loading="store.loading" @click="pickFile">
-                <template #icon>
-                    <folder-open-outlined />
-                </template>
-                打开
-            </a-button>
-
-            <a-dropdown :trigger="['click']">
-                <a-button size="small" :disabled="!store.seq.length">
-                    <template #icon>
-                        <plus-outlined />
-                    </template>
-                    插入
-                    <down-outlined />
-                </a-button>
-                <template #overlay>
-                    <a-menu @click="onInsertMenu">
-                        <a-menu-item key="blank">插入空白页…</a-menu-item>
-                        <a-menu-item key="pdf">从 PDF 插入页面…</a-menu-item>
-                        <a-menu-item key="append">追加整个 PDF…</a-menu-item>
-                        <a-menu-item key="images">插入图片…</a-menu-item>
-                        <a-menu-item key="office">插入 Word / PPT / Excel…</a-menu-item>
-                        <a-menu-divider />
-                        <a-menu-item key="keep">仅保留选中页</a-menu-item>
-                        <a-menu-item key="invert">反选</a-menu-item>
-                    </a-menu>
-                </template>
-            </a-dropdown>
-
-            <span class="ws-sep"></span>
-
-            <a-tooltip :title="store.mainPath ? '保存到 ' + store.mainPath : '还没有文件，将提示选择保存位置'">
-                <a-button size="small" :type="store.dirty ? 'primary' : 'default'"
-                    :disabled="!store.seq.length" :loading="store.saving" @click="doSave">
-                    <template #icon>
-                        <save-outlined />
-                    </template>
-                    保存
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="另存为：选一个新位置写入，并让「保存」以后都写那里（Ctrl+Shift+S）">
-                <a-button size="small" :disabled="!store.seq.length" :loading="store.saving" @click="doSaveAs">
-                    另存为
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="导出：按下面的选项写一份副本，不改变这份文档自己的文件">
-                <a-button size="small" :disabled="!store.seq.length" :loading="store.saving" @click="openExport">
-                    <template #icon>
-                        <export-outlined />
-                    </template>
-                    导出
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="水印 / 页码 / 页眉页脚（导出时应用，不改源文件）">
-                <a-button size="small" :disabled="!store.seq.length" @click="decorVisible = true">
-                    <template #icon>
-                        <font-size-outlined />
-                    </template>
-                    页面装饰
-                </a-button>
-            </a-tooltip>
-
-            <span class="ws-sep"></span>
-
-            <a-tooltip title="撤销 (Ctrl+Z)">
-                <a-button size="small" :disabled="!store.canUndo" @click="store.undo()">
-                    <template #icon>
-                        <undo-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="重做 (Ctrl+Shift+Z)">
-                <a-button size="small" :disabled="!store.canRedo" @click="store.redo()">
-                    <template #icon>
-                        <redo-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="逆时针旋转 90° ([)">
-                <a-button size="small" :disabled="!canEdit" @click="store.doRotate(-90)">
-                    <template #icon>
-                        <rotate-left-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="顺时针旋转 90° (])">
-                <a-button size="small" :disabled="!canEdit" @click="store.doRotate(90)">
-                    <template #icon>
-                        <rotate-right-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="复制所选页面 (Ctrl+D)">
-                <a-button size="small" :disabled="!canEdit" @click="store.doDuplicate()">
-                    <template #icon>
-                        <copy-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
-            <a-tooltip title="删除所选页面 (Delete)">
-                <a-button size="small" danger :disabled="!canEdit" @click="store.doDelete()">
-                    <template #icon>
-                        <delete-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
-
-            <span class="ws-sep"></span>
-
-            <a-tooltip :title="railOpen ? '收起缩略图' : '展开缩略图'">
-                <a-button size="small" @click="railOpen = !railOpen">
-                    <template #icon>
-                        <menu-fold-outlined v-if="railOpen" />
-                        <menu-unfold-outlined v-else />
-                    </template>
-                </a-button>
-            </a-tooltip>
-
+            <span class="ws-title" :title="store.mainPath || '尚未保存到文件'">{{ store.title || '未命名文档' }}</span>
+            <span v-if="store.dirty" class="ws-unsaved" title="有未保存的更改">未保存</span>
             <span class="ws-spacer"></span>
-
-            <span v-if="store.title" class="ws-title" :title="store.mainPath || '尚未保存到文件'">
-                {{ store.title }}
-            </span>
-            <a-tag v-if="store.dirty" color="orange">未保存</a-tag>
-            <a-tag v-if="urlMode === 'origin'" color="orange">图源: origin</a-tag>
-            <a-tag v-if="imgFailed" color="red">图片加载失败</a-tag>
-
-            <!--
-                主题切换放在工作区顶部栏：这是天天要用的开关，
-                之前藏在「首选项」里，得专门进去才找得到。
-            -->
-            <a-tooltip :title="themeAttr === 'dark' ? '切换到亮色' : '切换到深色'">
-                <a-button size="small" type="text" class="ws-theme-btn" @click="toggleTheme">
-                    <template #icon>
-                        <bulb-filled v-if="themeAttr === 'dark'" />
-                        <bulb-outlined v-else />
-                    </template>
-                </a-button>
-            </a-tooltip>
-
-            <a-tooltip title="首选项">
-                <a-button size="small" type="text" @click="$emit('open-settings')">
-                    <template #icon>
-                        <setting-outlined />
-                    </template>
-                </a-button>
-            </a-tooltip>
+            <a-button class="ws-mode-toggle" size="small" @click="toggleCompact" :disabled="windowChanging">
+                <template #icon><expand-outlined v-if="store.compactMode" /><compress-outlined v-else /></template>
+                {{ store.compactMode ? '完整模式' : '精简模式' }}
+            </a-button>
+            <a-button size="small" :type="store.alwaysOnTop ? 'primary' : 'default'" @click="toggleAlwaysOnTop"
+                :aria-pressed="store.alwaysOnTop" :title="store.alwaysOnTop ? '取消窗口置顶' : '窗口始终显示在最前面'">
+                <template #icon><pushpin-filled v-if="store.alwaysOnTop" /><pushpin-outlined v-else /></template>
+                {{ store.alwaysOnTop ? '已置顶' : '置顶' }}
+            </a-button>
+        </header>
+        <header class="ws-top">
+            <a-button @click="pickFile" :loading="store.loading"><template #icon><folder-open-outlined /></template>打开</a-button>
+            <a-dropdown v-if="!store.compactMode" :trigger="['click']">
+                <a-button :disabled="!store.seq.length"><template #icon><plus-outlined /></template>插入 <down-outlined /></a-button>
+                <template #overlay><a-menu @click="onInsertMenu">
+                    <a-menu-item key="blank">插入空白页…</a-menu-item>
+                    <a-menu-item key="pdf">从 PDF 插入页面…</a-menu-item>
+                    <a-menu-item key="append">追加整个 PDF…</a-menu-item>
+                    <a-menu-item key="images">插入图片…</a-menu-item>
+                    <a-menu-item key="office">插入 Word / PPT / Excel…</a-menu-item>
+                    <a-menu-divider />
+                    <a-menu-item key="keep">仅保留选中页</a-menu-item>
+                    <a-menu-item key="invert">反选</a-menu-item>
+                </a-menu></template>
+            </a-dropdown>
+            <span class="ws-sep"></span>
+            <a-button type="primary" @click="doSave" :disabled="!store.seq.length" :loading="store.saving" title="保存 (Ctrl+S)">
+                <template #icon><save-outlined /></template>保存
+            </a-button>
+            <template v-if="!store.compactMode">
+                <a-button @click="openExport" :disabled="!store.seq.length"><template #icon><export-outlined /></template>导出</a-button>
+                <span class="ws-sep"></span>
+                <a-button type="text" @click="store.undo()" :disabled="!store.canUndo" title="撤销 (Ctrl+Z)"><undo-outlined /></a-button>
+                <a-button type="text" @click="store.redo()" :disabled="!store.canRedo" title="重做 (Ctrl+Shift+Z)"><redo-outlined /></a-button>
+                <span class="ws-sep"></span>
+                <a-button :type="mode === 'crop' ? 'primary' : 'text'" @click="mode = mode === 'crop' ? 'view' : 'crop'" :disabled="!canEdit"><template #icon><scissor-outlined /></template>裁剪</a-button>
+                <a-button :type="mode === 'mask' ? 'primary' : 'text'" @click="mode = mode === 'mask' ? 'view' : 'mask'" :disabled="!canEdit"><template #icon><border-outlined /></template>遮盖</a-button>
+                <a-dropdown :trigger="['click']">
+                    <a-button type="text"><template #icon><more-outlined /></template>更多 <down-outlined /></a-button>
+                    <template #overlay><a-menu @click="onCommandMenu">
+                        <a-menu-item key="new">新建文档…</a-menu-item>
+                        <a-menu-item key="saveas" :disabled="!store.seq.length">另存为…</a-menu-item>
+                        <a-menu-item key="decor" :disabled="!store.seq.length">水印 / 页码 / 页眉页脚…</a-menu-item>
+                        <a-menu-divider />
+                        <a-menu-item key="duplicate" :disabled="!canEdit">复制所选页面</a-menu-item>
+                        <a-menu-item key="delete" :disabled="!canEdit">删除所选页面</a-menu-item>
+                        <a-menu-divider />
+                        <a-menu-item key="toolbox">工具箱</a-menu-item>
+                        <a-menu-item key="settings">首选项</a-menu-item>
+                        <a-menu-item key="shortcuts">键盘与鼠标操作…</a-menu-item>
+                    </a-menu></template>
+                </a-dropdown>
+                <span class="ws-spacer"></span>
+                <a-button type="text" @click="railOpen = !railOpen" :title="railOpen ? '收起缩略图' : '展开缩略图'"><menu-fold-outlined v-if="railOpen" /><menu-unfold-outlined v-else /></a-button>
+                <a-button type="text" @click="toggleTheme" :title="themeAttr === 'dark' ? '切换到亮色' : '切换到深色'"><bulb-filled v-if="themeAttr === 'dark'" /><bulb-outlined v-else /></a-button>
+            </template>
+            <template v-else>
+                <span class="ws-sep"></span>
+                <a-button type="text" @click="zoomBy(1 / 1.25)" title="缩小"><minus-outlined /></a-button>
+                <a-button type="text" class="zoom-pct" @click="zoomFit" title="适应窗口">{{ zoomPct }}%</a-button>
+                <a-button type="text" @click="zoomBy(1.25)" title="放大"><plus-outlined /></a-button>
+                <span class="ws-spacer"></span>
+                <a-button type="text" @click="gotoRelative(-1)" :disabled="store.currentPos <= 0" title="上一页"><left-outlined /></a-button>
+                <span class="ws-page-count">{{ store.seq.length ? store.currentPos + 1 : 0 }} / {{ store.seq.length }}</span>
+                <a-button type="text" @click="gotoRelative(1)" :disabled="store.currentPos >= store.seq.length - 1" title="下一页"><right-outlined /></a-button>
+            </template>
         </header>
 
         <a-alert v-if="store.error" type="error" show-icon closable :message="store.error" class="ws-alert"
@@ -179,84 +80,59 @@
 
         <!-- 主体：左轨道（可收起） + 右画布 -->
         <div class="ws-body">
-            <ThumbRail v-if="railOpen" :rows="rows" :selected="store.selected" :current="store.current"
+            <ThumbRail v-if="railOpen && !store.compactMode" :rows="rows" :selected="store.selected" :current="store.current"
                 :width="store.thumbWidth" @select="onSelect" @move="onMove" @need="onNeedThumbs" @ctx="onCtx" />
 
             <!-- 画布外层：浮动工具条贴在画布上方，画布自身可滚动（放大后要能看别处） -->
             <div class="ws-canvas-wrap">
                 <!--
-                    画布浮动工具条：只放"跟当前视图/页面有关"的东西，
+                    画布底部浮动工具条：只放"跟当前视图/页面有关"的东西，
                     并且刻意做得能在一行放下——旧版把它和应用工具条分成两条，
                     在 1280 宽度下这条还会换行，合计吃掉一百多像素高度。
                     不常用的操作收进「⋯」，用不到的东西不占位置。
                 -->
-                <div class="ws-modes" ref="modesRef">
-                    <a-radio-group v-model:value="mode" size="small" button-style="solid">
-                        <a-radio-button value="view">浏览</a-radio-button>
-                        <a-radio-button value="crop">裁剪</a-radio-button>
-                        <a-radio-button value="mask">遮盖</a-radio-button>
+                <div v-show="!store.compactMode" class="ws-modes" ref="modesRef">
+                    <a-button size="small" :type="mode === 'view' ? 'primary' : 'text'" @click="mode = 'view'" title="浏览 · 按住中键拖动平移"><drag-outlined /></a-button>
+                    <span class="ws-sep"></span>
+                    <a-button size="small" type="text" @click="zoomFit" title="适应窗口 (Ctrl+0)"><fullscreen-outlined /> 适应</a-button>
+                    <a-button size="small" type="text" @click="zoomBy(1 / 1.25)" title="缩小"><minus-outlined /></a-button>
+                    <a-button size="small" type="text" class="zoom-pct" @click="zoomActual" title="点击按真实物理尺寸显示">{{ zoomPct }}%</a-button>
+                    <a-button size="small" type="text" @click="zoomBy(1.25)" title="放大"><plus-outlined /></a-button>
+                    <span class="ws-sep"></span>
+                    <a-button size="small" type="text" @click="store.doRotate(90)" :disabled="!canEdit" title="顺时针旋转 90°"><rotate-right-outlined /></a-button>
+                    <span class="ws-sep"></span>
+                    <a-radio-group :value="store.viewMode" size="small" button-style="solid" @update:value="onViewModeChange">
+                        <a-radio-button value="single" title="单页"><file-outlined /></a-radio-button>
+                        <a-radio-button value="dual" title="双页"><column-width-outlined /></a-radio-button>
+                        <a-radio-button value="continuous" title="连续滚动"><unordered-list-outlined /></a-radio-button>
                     </a-radio-group>
-                    <a-radio-group :value="store.viewMode" size="small" button-style="solid"
-                        @update:value="onViewModeChange">
-                        <a-radio-button value="single">单页</a-radio-button>
-                        <a-radio-button value="dual">双页</a-radio-button>
-                        <a-radio-button value="continuous">连续</a-radio-button>
-                    </a-radio-group>
-
-                    <!-- 缩放：Ctrl+滚轮 或 Ctrl + / Ctrl - -->
-                    <a-button-group size="small">
-                        <a-button @click="zoomBy(1 / 1.25)" title="缩小 (Ctrl -)">−</a-button>
-                        <a-button class="zoom-pct" @click="zoomFit" title="点一下回到适应窗口">
-                            {{ zoomPct }}%
-                        </a-button>
-                        <a-button @click="zoomBy(1.25)" title="放大 (Ctrl +)">＋</a-button>
-                    </a-button-group>
-                    <a-button size="small" :type="store.zoomMode === 'fit' ? 'primary' : 'default'"
-                        @click="zoomFit">适应</a-button>
-                    <a-tooltip title="1 个图像像素对 1 个屏幕像素">
-                        <a-button size="small" @click="zoomActual">1:1</a-button>
-                    </a-tooltip>
-
                     <template v-if="mode === 'mask'">
                         <a-input v-model:value="maskColor" size="small" style="width: 82px" title="遮盖颜色" />
-                        <a-input-number v-model:value="maskOpacity" size="small" :min="0.1" :max="1" :step="0.1"
-                            style="width: 72px" title="不透明度" />
+                        <a-input-number v-model:value="maskOpacity" size="small" :min="0.1" :max="1" :step="0.1" style="width: 62px" title="不透明度" />
                     </template>
-
-                    <a-select :value="store.thumbWidth" size="small" style="width: 86px" :options="thumbSizeOptions"
-                        title="缩略图大小" @update:value="onThumbWidthChange" />
-
                     <a-dropdown :trigger="['click']">
-                        <a-tooltip title="更多">
-                            <a-button size="small">
-                                <template #icon>
-                                    <more-outlined />
-                                </template>
-                            </a-button>
-                        </a-tooltip>
-                        <template #overlay>
-                            <a-menu @click="onMoreMenu">
-                                <a-menu-item key="selectall" :disabled="!store.seq.length">全选</a-menu-item>
-                                <a-menu-item key="clearsel" :disabled="!store.selected.length">取消选择</a-menu-item>
-                                <a-menu-divider />
-                                <a-menu-item key="clearops" :disabled="!canEdit">清除裁剪 / 遮盖</a-menu-item>
-                                <a-menu-item key="rmannots" :disabled="!canEdit">
-                                    {{ removeAnnotsMarked ? "取消删除批注" : "删除批注" }}
-                                </a-menu-item>
-                                <a-menu-divider />
-                                <a-menu-item key="text" :disabled="!canEdit">提取本页文本</a-menu-item>
-                                <a-menu-item key="images" :disabled="!canEdit">提取本页图片</a-menu-item>
-                                <a-menu-divider />
-                                <a-menu-item key="shortcuts">键盘快捷键…</a-menu-item>
-                            </a-menu>
-                        </template>
+                        <a-button size="small" type="text" title="更多页面操作"><more-outlined /></a-button>
+                        <template #overlay><a-menu @click="onMoreMenu">
+                            <a-menu-item key="selectall" :disabled="!store.seq.length">全选</a-menu-item>
+                            <a-menu-item key="clearsel" :disabled="!store.selected.length">取消选择</a-menu-item>
+                            <a-menu-item key="clearops" :disabled="!canEdit">清除裁剪 / 遮盖</a-menu-item>
+                            <a-menu-item key="rmannots" :disabled="!canEdit">{{ removeAnnotsMarked ? '取消删除批注' : '删除批注' }}</a-menu-item>
+                            <a-menu-divider />
+                            <a-menu-item key="text" :disabled="!canEdit">提取本页文本</a-menu-item>
+                            <a-menu-item key="images" :disabled="!canEdit">提取本页图片</a-menu-item>
+                            <a-menu-divider />
+                            <a-menu-item key="thumb-small">小缩略图</a-menu-item>
+                            <a-menu-item key="thumb-medium">中缩略图</a-menu-item>
+                            <a-menu-item key="thumb-large">大缩略图</a-menu-item>
+                            <a-menu-item key="shortcuts">键盘与鼠标操作…</a-menu-item>
+                        </a-menu></template>
                     </a-dropdown>
                 </div>
 
                 <!-- 可滚动画布：放大后靠滚动查看其余部分。
-                     工具条在上面、不参与滚动，所以放大后缩放按钮仍然够得着。 -->
-                <div ref="canvasRef" class="ws-canvas" :style="{ paddingTop: modesH + 10 + 'px' }"
-                    @wheel="onCanvasWheel" @scroll="onCanvasScroll">
+                     工具条浮在底部、不参与滚动，所以放大后缩放按钮仍然够得着。 -->
+                <div ref="canvasRef" class="ws-canvas" :style="{ paddingBottom: (store.compactMode ? 12 : modesH + 24) + 'px' }" :class="{ 'is-panning': panning }"
+                    @wheel="onCanvasWheel" @scroll="onCanvasScroll" @pointerdown.capture="onPanDown" @lostpointercapture="stopPan" @auxclick.prevent @dragstart.prevent>
                     <div v-if="store.previewLoading && !views.length" class="ws-hint">渲染中…</div>
 
                     <!-- 页面预览。单页一列，双页并排两列，连续模式纵向铺满全部页；
@@ -340,7 +216,7 @@
         </div>
 
         <!-- 状态栏：页码 / 选择 / 缩放 / 当前模式。文档类软件的常规位置 -->
-        <footer class="ws-status">
+        <footer v-if="!store.compactMode" class="ws-status">
             <span v-if="store.seq.length">第 {{ store.currentPos + 1 }} / {{ store.seq.length }} 页</span>
             <span v-else>就绪</span>
             <template v-if="store.selected.length">
@@ -367,7 +243,7 @@
             <span class="ws-dot">·</span>
             <span>{{ viewModeLabel }}</span>
             <span class="ws-dot">·</span>
-            <span>{{ themeAttr === 'dark' ? '深色' : '亮色' }}</span>
+            <span>中键拖动平移 · 滚轮缩放</span>
         </footer>
 
         <!--
@@ -677,6 +553,9 @@ import {
     SettingOutlined,
     BulbOutlined,
     BulbFilled,
+    PushpinOutlined, PushpinFilled, CompressOutlined, ExpandOutlined, BorderOutlined,
+    ScissorOutlined, DragOutlined, MinusOutlined, FullscreenOutlined,
+    ColumnWidthOutlined, UnorderedListOutlined, LeftOutlined, RightOutlined,
 } from '@ant-design/icons-vue';
 import {
     SelectDir,
@@ -690,7 +569,7 @@ import {
     WorkspacePageText,
     WorkspacePageImages,
 } from '../../../wailsjs/go/main/App';
-import { OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
+import { WindowSetAlwaysOnTop, WindowSetMinSize, WindowGetSize, WindowSetSize, WindowIsMaximised, OnFileDrop, OnFileDropOff } from '../../../wailsjs/runtime/runtime';
 import { installDropFix } from '../../dropfix';
 import { themeMode, setTheme } from '../../theme';
 import { useWorkspaceState, WS_THUMB_WIDTH } from '../../store/workspace';
@@ -706,6 +585,8 @@ import {
 } from './model';
 import { runOps } from './devops';
 import ThumbRail from './ThumbRail.vue';
+import appIcon from '../../assets/appicon.png';
+import { zoomAnchorScroll } from './viewport';
 
 export default defineComponent({
     emits: ["open-toolbox", "open-settings"],
@@ -731,9 +612,12 @@ export default defineComponent({
         SettingOutlined,
         BulbOutlined,
         BulbFilled,
+        PushpinOutlined, PushpinFilled, CompressOutlined, ExpandOutlined, BorderOutlined,
+        ScissorOutlined, DragOutlined, MinusOutlined, FullscreenOutlined,
+        ColumnWidthOutlined, UnorderedListOutlined, LeftOutlined, RightOutlined,
         ThumbRail,
     },
-    setup() {
+    setup(_props, { emit }) {
         const store = useWorkspaceState();
         const origin = window.location.origin;
 
@@ -956,7 +840,7 @@ export default defineComponent({
             const n = raw.length;
             const gap = n > 1 ? 16 : 0;
             const availW = Math.max(120, canvasW.value - 30 - gap);
-            const availH = Math.max(120, canvasH.value - modesH.value - 30);
+            const availH = Math.max(120, canvasH.value - (store.compactMode ? 0 : modesH.value) - 40);
 
             // CSS px / pt：适应窗口时由**整份文档**的最大页决定，自定义时只由倍率决定。
             // 两者都与页面自身大小无关，因此各页之间的大小关系始终是真实的。
@@ -1035,6 +919,30 @@ export default defineComponent({
             store.viewMode === 'continuous' ? contViews.value : pagedViews.value
         );
         const isCont = computed(() => store.viewMode === 'continuous');
+
+        /**
+         * 这一屏最长的那页要画多少 CSS 像素。
+         *
+         * 用它反推渲染分辨率：屏幕真正需要的是"显示宽度 × devicePixelRatio"个
+         * 设备像素，少一个就会被浏览器放大、就糊。fitW 正是最终显示的 CSS 宽度，
+         * 而且**与渲染档位无关**（各视图里那套 scale 计算刻意保证了换档不跳大小），
+         * 所以这里可以安全地读它，不会和渲染宽度互相追着改。
+         */
+        const wantCssWidth = computed(() => {
+            let w = 0;
+            for (const v of views.value) w = Math.max(w, v.fitW || 0);
+            return w;
+        });
+
+        /**
+         * devicePixelRatio 不是响应式的：把窗口拖到另一块缩放比例不同的屏幕上时
+         * 它变了也不会通知谁，所以自己监听 resize 再读一次。
+         */
+        const dpr = ref(window.devicePixelRatio || 1);
+        const syncDpr = () => {
+            dpr.value = window.devicePixelRatio || 1;
+        };
+        window.addEventListener('resize', syncDpr);
 
         /**
          * 页元素登记。单页/双页只需要第一格（框选固定在那）；
@@ -1148,8 +1056,23 @@ export default defineComponent({
 
         watch(
             () => [isCont.value, store.seq.length, store.previewWidth] as const,
-            () => {
-                void registerContPages();
+            async () => {
+                await registerContPages();
+                if (!isCont.value) return;
+                // 换渲染档位后必须**主动**把可见页再取一遍。
+                //
+                // IntersectionObserver 的 observe() 对已观察元素是空操作，不会因为
+                // 尺寸或档位变化再回调一次；而 previewKey 里带着宽度，档位一换旧图
+                // 立刻查不到，每页就都停在 loadingface 上——表现为"缩放之后连续
+                // 视图一片空白，滚一下才回来"。这里补上这一刀。
+                const need: { docId: string; pageIndex: number }[] = [];
+                for (const id of visibleIds) {
+                    const el = pageBoxes.get(id);
+                    const docId = el?.dataset.doc || '';
+                    const pageIndex = Number(el?.dataset.page);
+                    if (docId && pageIndex >= 0) need.push({ docId, pageIndex });
+                }
+                if (need.length) void store.ensurePreviewsFor(need);
             }
         );
 
@@ -1191,7 +1114,7 @@ export default defineComponent({
             node?.scrollIntoView({ block: 'start' });
         };
 
-        /** 工具条高度：画布要给它让出位置，否则页面上沿被压住 */
+        /** 工具条高度：画布底部要给它让出位置，避免遮住页面 */
         const modesRef = ref<HTMLElement | null>(null);
         const modesH = ref(52);
         let modesRo: ResizeObserver | null = null;
@@ -1199,17 +1122,22 @@ export default defineComponent({
         // --- 缩放 ---------------------------------------------------------
 
         /**
-         * 以**参考宽度**为基准的显示倍数：100% = 默认档渲染图 1 像素对 1 CSS 像素。
+         * 以**参考宽度**为基准的显示倍数：100% = 基准页面(A4 宽)显示成 ZOOM_REF_WIDTH 那么宽。
          *
-         * 不能用"图像像素比"（scale 本身）来当读数：渲染档位会在放大时从 900 换到 2000，
-         * 于是同一块屏幕大小会读出 119% 又突然变成 54%，控件与读数就对不上了。
+         * 必须用 v.fitW / v.ptW（= 真正的 CSS px/pt）来算，**不能**用 v.scale。
+         * v.scale 是作用在 .pv-box 上的变换倍数，里面含一个 1/渲染宽度：
+         *     scale = 真实宽度(pt) × cssPerPt / 渲染宽度(px)
+         * 于是渲染宽度一变，读数就跟着变，可它俩本来是两件事。
+         * 实测：A3 图纸放大到 2.5 倍、渲染宽度 4096 时读数是 73%（应为 250%）。
+         *
+         * 这不只是显示难看：zoomBy() / Ctrl+滚轮 都拿 refScale 当"当前倍数"，
+         * 读数偏小 → 按「+」反而会把页面缩小，方向都是反的。
+         * fitW 与渲染宽度无关（各视图里 scale 的计算刻意保证了这点），所以用它才对。
          */
         const refScale = computed(() => {
             const v = views.value[0];
-            if (!v) return 1;
-            // scale 是"CSS px / pt"，除以基准就是倍率本身；
-            // 100% = 基准页面(A4 宽)显示成 ZOOM_REF_WIDTH 那么宽。
-            return v.scale / CSS_PER_PT_AT_100;
+            if (!v || !v.ptW) return 1;
+            return v.fitW / v.ptW / CSS_PER_PT_AT_100;
         });
         const zoomPct = computed(() => Math.round(refScale.value * 100));
 
@@ -1218,31 +1146,115 @@ export default defineComponent({
         const zoomActual = () => store.setZoom(CSS_PER_PT_ACTUAL / CSS_PER_PT_AT_100);
         const zoomFit = () => store.zoomFit();
 
-        /**
-         * Ctrl + 滚轮缩放。
-         *
-         * 缩放后把滚动位置按比例调回去，让光标底下的那个点大致留在原处——
-         * 否则放大后视野会跳到别处，还得重新找刚才在看的位置。
-         */
-        const onCanvasWheel = (e: WheelEvent) => {
-            if (!e.ctrlKey) return; // 普通滚轮留给滚动
+        /** 滚轮围绕实际页面上的指针位置缩放；Shift+滚轮保留滚动操作。 */
+        let wheelGen = 0;
+        const onCanvasWheel = async (e: WheelEvent) => {
+            if (e.shiftKey && !e.ctrlKey) return;
+            if (!store.seq.length || e.deltaY === 0 || panning.value) return;
             e.preventDefault();
             const el = canvasRef.value;
-            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-            const next = Math.max(0.15, Math.min(6, refScale.value * factor));
-            if (!el) {
-                store.setZoom(next);
-                return;
+            if (!el) return;
+            const gen = ++wheelGen;
+            const target = e.target as HTMLElement;
+            let page = target.closest('.pv-fit') as HTMLElement | null;
+            if (!page) {
+                let closest = Infinity;
+                for (const candidate of pageBoxes.values()) {
+                    const r = candidate.getBoundingClientRect();
+                    const distance = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom);
+                    if (distance < closest) { closest = distance; page = candidate; }
+                }
             }
-            const r = el.getBoundingClientRect();
-            const fx = el.scrollWidth ? (e.clientX - r.left + el.scrollLeft) / el.scrollWidth : 0.5;
-            const fy = el.scrollHeight ? (e.clientY - r.top + el.scrollTop) / el.scrollHeight : 0.5;
-            store.setZoom(next);
-            // 等 DOM 按新尺寸布局完再调整滚动位置
-            requestAnimationFrame(() => {
-                el.scrollLeft = fx * el.scrollWidth - (e.clientX - r.left);
-                el.scrollTop = fy * el.scrollHeight - (e.clientY - r.top);
-            });
+            const before = page?.getBoundingClientRect();
+            const delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1);
+            const factor = Math.exp(-Math.max(-200, Math.min(200, delta)) * 0.002);
+            store.setZoom(refScale.value * factor);
+            await nextTick();
+            if (gen !== wheelGen || !page?.isConnected || !before) return;
+            const anchored = zoomAnchorScroll(
+                { left: el.scrollLeft, top: el.scrollTop },
+                { x: e.clientX, y: e.clientY }, before, page.getBoundingClientRect()
+            );
+            el.scrollLeft = anchored.left;
+            el.scrollTop = anchored.top;
+        };
+
+        const panning = ref(false);
+        let pan: { pointerId: number; x: number; y: number; left: number; top: number } | null = null;
+        const onPanMove = (e: PointerEvent) => {
+            const el = canvasRef.value;
+            if (!pan || !el || e.pointerId !== pan.pointerId) return;
+            e.preventDefault();
+            el.scrollLeft = pan.left - (e.clientX - pan.x);
+            el.scrollTop = pan.top - (e.clientY - pan.y);
+        };
+        const stopPan = () => {
+            const el = canvasRef.value;
+            if (pan && el?.hasPointerCapture(pan.pointerId)) el.releasePointerCapture(pan.pointerId);
+            pan = null;
+            panning.value = false;
+            window.removeEventListener('pointermove', onPanMove);
+            window.removeEventListener('pointerup', onPanEnd);
+            window.removeEventListener('pointercancel', onPanEnd);
+            window.removeEventListener('blur', stopPan);
+        };
+        const onPanEnd = (e: PointerEvent) => {
+            if (pan && e.pointerId === pan.pointerId) stopPan();
+        };
+        const onPanDown = (e: PointerEvent) => {
+            const el = canvasRef.value;
+            if (e.button !== 1 || !el || !store.seq.length) return;
+            e.preventDefault();
+            e.stopPropagation();
+            stopPan();
+            pan = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+            panning.value = true;
+            el.setPointerCapture(e.pointerId);
+            window.addEventListener('pointermove', onPanMove, { passive: false });
+            window.addEventListener('pointerup', onPanEnd);
+            window.addEventListener('pointercancel', onPanEnd);
+            window.addEventListener('blur', stopPan);
+        };
+
+        const windowChanging = ref(false);
+        const toggleCompact = async () => {
+            if (windowChanging.value) return;
+            windowChanging.value = true;
+            try {
+                const compact = !store.compactMode;
+                if (compact) {
+                    const maximised = await WindowIsMaximised();
+                    store.normalWindowSize = maximised ? null : await WindowGetSize();
+                    WindowSetMinSize(640, 420);
+                    if (store.normalWindowSize) WindowSetSize(Math.min(960, store.normalWindowSize.w), Math.min(640, store.normalWindowSize.h));
+                    mode.value = 'view';
+                } else {
+                    WindowSetMinSize(1000, 600);
+                    if (store.normalWindowSize) WindowSetSize(store.normalWindowSize.w, store.normalWindowSize.h);
+                }
+                store.compactMode = compact;
+                stopPan();
+            } catch (e: any) { fail(e); }
+            finally { windowChanging.value = false; }
+        };
+        const toggleAlwaysOnTop = () => {
+            try {
+                const next = !store.alwaysOnTop;
+                WindowSetAlwaysOnTop(next);
+                store.alwaysOnTop = next;
+            } catch (e: any) { fail(e); }
+        };
+        const onCommandMenu = ({ key }: { key: string }) => {
+            switch (key) {
+                case 'new': askNew(); break;
+                case 'saveas': void doSaveAs(); break;
+                case 'decor': decorVisible.value = true; break;
+                case 'duplicate': store.doDuplicate(); break;
+                case 'delete': store.doDelete(); break;
+                case 'toolbox': emit('open-toolbox'); break;
+                case 'settings': emit('open-settings'); break;
+                case 'shortcuts': shortcutVisible.value = true; break;
+            }
         };
 
         // --- 视图偏好与快捷键面板 -----------------------------------------
@@ -1285,7 +1297,9 @@ export default defineComponent({
             ['[ / ]', '逆时针 / 顺时针旋转 90°'],
             ['方向键 / PageUp / PageDown', '上一页 / 下一页'],
             ['Home / End', '第一页 / 最后一页'],
-            ['Ctrl + 滚轮 / Ctrl + / Ctrl -', '缩放'],
+            ['滚轮 / Ctrl + / Ctrl -', '以鼠标位置为中心缩放'],
+            ['按住鼠标中键拖动', '平移画布（包括裁剪 / 遮盖模式）'],
+            ['Shift + 滚轮', '滚动画布'],
             ['Ctrl + 0', '缩放回「适应窗口」'],
             ['Ctrl + Z / Ctrl + Shift + Z', '撤销 / 重做'],
             ['Ctrl + S', '保存（没有文件时按「另存为」提示选位置；覆盖前自动备份 .bak）'],
@@ -1804,6 +1818,9 @@ export default defineComponent({
          * 这些操作以前散在工具条上占了一整行，收起来之后工具条才能在窄窗口下不换行。
          */
         const onMoreMenu = ({ key }: { key: string }) => {
+            if (key === 'thumb-small') { store.setThumbWidth(110); return; }
+            if (key === 'thumb-medium') { store.setThumbWidth(150); return; }
+            if (key === 'thumb-large') { store.setThumbWidth(210); return; }
             switch (key) {
                 case 'selectall':
                     store.selectAll();
@@ -1989,6 +2006,8 @@ export default defineComponent({
         };
 
         const onKey = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement | null;
+            if (target?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) return;
             if (!store.seq.length) return;
             const ctrl = e.ctrlKey || e.metaKey;
             if (ctrl && e.key.toLowerCase() === 's') {
@@ -2059,6 +2078,20 @@ export default defineComponent({
                 store.doRotate(90);
             }
         };
+
+        // immediate：文档一打开就按正确分辨率渲染，不必等用户先碰一下缩放。
+        //
+        // flush:'sync' 是关键，不是随手加的：打开文档时 store.open() 会**同步**把清单
+        // 写进 seq，紧接着才 await focusItem()。用默认的 'pre' 刷新，宽度要等本轮
+        // 渲染队列走完才推过去，第一次取图就落在 900px 兜底档位上——白渲染一张低
+        // 分辨率的图，用户还会先看到一帧糊的。同步推过去就没有这个中间态。
+        watch(
+            () => [wantCssWidth.value, dpr.value] as const,
+            () => {
+                store.setRenderWidth(wantCssWidth.value, dpr.value);
+            },
+            { immediate: true, flush: 'sync' }
+        );
 
         onMounted(async () => {
             store.loadCacheRoot();
@@ -2233,7 +2266,11 @@ export default defineComponent({
         });
 
         onUnmounted(() => {
+            stopPan();
+            window.removeEventListener('pointermove', onCanvasMove);
+            window.removeEventListener('pointerup', onCanvasUp);
             window.removeEventListener('keydown', onKey);
+            window.removeEventListener('resize', syncDpr);
             OnFileDropOff();
             if (ro) ro.disconnect();
             if (modesRo) modesRo.disconnect();
@@ -2241,6 +2278,8 @@ export default defineComponent({
         });
 
         return {
+            appIcon, toggleCompact, toggleAlwaysOnTop, windowChanging, onCommandMenu,
+            panning, onPanDown, stopPan, gotoRelative,
             store,
             rows,
             url,
@@ -2372,13 +2411,42 @@ export default defineComponent({
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    gap: 6px;
-    height: 46px;
-    padding: 0 10px;
+    gap: 8px;
+    height: 50px;
+    padding: 0 18px;
     border-bottom: 1px solid var(--ws-border);
     background: var(--ws-bg);
     overflow: hidden;
 }
+
+.ws-appbar {
+    display: flex;
+    flex: 0 0 48px;
+    align-items: center;
+    gap: 12px;
+    padding: 0 18px;
+    background: var(--ws-bg-subtle);
+    border-bottom: 1px solid var(--ws-border);
+    color: var(--ws-text);
+}
+.ws-logo { width: 28px; height: 28px; object-fit: contain; }
+.ws-brand { font-size: 15px; white-space: nowrap; }
+.ws-unsaved { font-size: 11px; color: var(--ws-warn-text); white-space: nowrap; }
+.ws-page-count { color: var(--ws-text-sub); font-size: 12px; white-space: nowrap; }
+.ws :deep(.ant-btn) { border-radius: 6px; font-size: 13px; box-shadow: none; }
+.ws :deep(.ant-btn-primary) { background: var(--ws-accent); border-color: var(--ws-accent); }
+.ws :deep(.ant-btn .anticon) { font-size: 16px; }
+.ws :deep(.ant-radio-button-wrapper) { border: 0; background: transparent; border-radius: 5px; }
+.ws :deep(.ant-radio-button-wrapper::before) { display: none; }
+.ws :deep(.ant-radio-button-wrapper-checked) { background: var(--ws-selected-bg); color: var(--ws-accent); }
+.ws-compact .ws-appbar { flex-basis: 42px; padding: 0 12px; gap: 8px; }
+.ws-compact .ws-top { height: 42px; padding: 0 12px; gap: 4px; }
+.ws-compact .ws-title { max-width: none; min-width: 0; flex: 1; }
+.ws-compact .ws-brand, .ws-compact .ws-appbar > .ws-sep,
+.ws-compact .ws-appbar > .ws-spacer { display: none; }
+.ws-compact .ws-logo { width: 24px; height: 24px; }
+.ws-compact .ws-body { border: 0; }
+.ws-compact .ws-unsaved { font-size: 10px; }
 
 /* 分组之间的细竖线 */
 .ws-sep {
@@ -2422,7 +2490,7 @@ export default defineComponent({
     font-size: 13px;
     /* 给个下限，否则会被 flex 压到只剩两个字符加省略号 */
     min-width: 80px;
-    max-width: 320px;
+    max-width: 480px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2436,8 +2504,7 @@ export default defineComponent({
     flex: 1;
     display: flex;
     min-height: 0;
-    border: 1px solid var(--ws-border);
-    border-radius: 8px;
+    border: 0;
     overflow: hidden;
 }
 
@@ -2462,7 +2529,11 @@ export default defineComponent({
     align-items: flex-start;
     background: var(--ws-bg-canvas);
     padding: 12px;
+    overscroll-behavior: contain;
+    touch-action: none;
 }
+.ws-canvas.is-panning, .ws-canvas.is-panning * { cursor: grabbing !important; user-select: none; }
+.ws-canvas img { user-select: none; -webkit-user-drag: none; }
 
 /* 画布里的内容用 margin:auto 居中，而不是给容器 justify-content:center ——
    后者在内容超出容器时会把左上角裁掉且滚不到，是 flex 居中 + 溢出的经典坑 */
@@ -2476,20 +2547,24 @@ export default defineComponent({
     text-align: center;
 }
 
-/* 页面内容工具条：浮在画布左上角，不随画布滚动 */
+/* 页面内容工具条：浮在画布底部中央，不随画布滚动 */
 .ws-modes {
     position: absolute;
-    left: 10px;
-    top: 8px;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
     z-index: 5;
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 4px 8px;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 7px 10px;
     background: var(--ws-panel);
     border: 1px solid var(--ws-border);
-    border-radius: 6px;
+    border-radius: 10px;
+    box-shadow: var(--ws-shadow-sm);
+    white-space: nowrap;
+    overflow-x: auto;
     max-width: calc(100% - 20px);
 }
 
@@ -2529,6 +2604,9 @@ export default defineComponent({
 .pv-fit {
     position: relative;
     overflow: hidden;
+    flex: 0 0 auto;
+    background: #fff;
+    box-shadow: 0 1px 5px rgba(28, 48, 78, 0.12);
 }
 
 /* 快捷键面板 */

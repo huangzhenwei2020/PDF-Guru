@@ -270,6 +270,10 @@ export function WorkspaceAddImageSource(arg1) {
   return window['go']['main']['App']['WorkspaceAddImageSource'](arg1);
 }
 
+export function WorkspaceAddOfficeSource(arg1) {
+  return window['go']['main']['App']['WorkspaceAddOfficeSource'](arg1);
+}
+
 export function WorkspaceAutoOpenPath() {
   return window['go']['main']['App']['WorkspaceAutoOpenPath']();
 }
@@ -286,6 +290,10 @@ export function WorkspaceCacheRoot() {
   return window['go']['main']['App']['WorkspaceCacheRoot']();
 }
 
+export function WorkspaceExport(arg1, arg2, arg3, arg4, arg5, arg6) {
+  return window['go']['main']['App']['WorkspaceExport'](arg1, arg2, arg3, arg4, arg5, arg6);
+}
+
 export function WorkspaceOpen(arg1) {
   return window['go']['main']['App']['WorkspaceOpen'](arg1);
 }
@@ -296,6 +304,30 @@ export function WorkspacePageImages(arg1, arg2, arg3) {
 
 export function WorkspacePageText(arg1, arg2) {
   return window['go']['main']['App']['WorkspacePageText'](arg1, arg2);
+}
+
+export function WorkspacePickDir(arg1) {
+  return window['go']['main']['App']['WorkspacePickDir'](arg1);
+}
+
+export function WorkspacePickFile(arg1, arg2) {
+  return window['go']['main']['App']['WorkspacePickFile'](arg1, arg2);
+}
+
+export function WorkspacePickFiles(arg1, arg2) {
+  return window['go']['main']['App']['WorkspacePickFiles'](arg1, arg2);
+}
+
+export function WorkspacePickPdfToOpen() {
+  return window['go']['main']['App']['WorkspacePickPdfToOpen']();
+}
+
+export function WorkspaceRememberDir(arg1) {
+  return window['go']['main']['App']['WorkspaceRememberDir'](arg1);
+}
+
+export function WorkspaceSaveDialog(arg1, arg2) {
+  return window['go']['main']['App']['WorkspaceSaveDialog'](arg1, arg2);
 }
 
 export function WorkspaceSetDirty(arg1) {

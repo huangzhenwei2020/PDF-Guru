@@ -136,6 +136,8 @@ export function WorkspaceAddConvertedSource(arg1:string):Promise<main.WSDocInfo>
 
 export function WorkspaceAddImageSource(arg1:Array<string>):Promise<main.WSDocInfo>;
 
+export function WorkspaceAddOfficeSource(arg1:string):Promise<main.WSDocInfo>;
+
 export function WorkspaceAutoOpenPath():Promise<string>;
 
 export function WorkspaceAutoOps():Promise<string>;
@@ -144,11 +146,25 @@ export function WorkspaceBuild(arg1:string,arg2:string,arg3:boolean,arg4:boolean
 
 export function WorkspaceCacheRoot():Promise<string>;
 
+export function WorkspaceExport(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<string>;
+
 export function WorkspaceOpen(arg1:string):Promise<main.WSDocInfo>;
 
 export function WorkspacePageImages(arg1:string,arg2:number,arg3:string):Promise<string>;
 
 export function WorkspacePageText(arg1:string,arg2:number):Promise<string>;
+
+export function WorkspacePickDir(arg1:string):Promise<string>;
+
+export function WorkspacePickFile(arg1:string,arg2:string):Promise<string>;
+
+export function WorkspacePickFiles(arg1:string,arg2:string):Promise<Array<string>>;
+
+export function WorkspacePickPdfToOpen():Promise<string>;
+
+export function WorkspaceRememberDir(arg1:string):Promise<void>;
+
+export function WorkspaceSaveDialog(arg1:string,arg2:string):Promise<string>;
 
 export function WorkspaceSetDirty(arg1:boolean):Promise<void>;
 

@@ -237,8 +237,17 @@ func (a *App) WorkspaceThumbs(docID string, pages string, width int) ([]WSThumb,
 	if width <= 0 {
 		width = 160
 	}
-	if width > 2000 {
-		width = 2000
+	// 上限必须和前端 store 里的 RENDER_WIDTH_MAX 保持一致。
+	//
+	// 这里原来是 2000，而前端大图又固定按 900 渲染——两者叠加的结果是：
+	// A3 图纸（1191pt 宽）不管怎么放大都最多 2000px（约 121 DPI），
+	// 而"放大"的唯一目的就是看清小字，于是照样是糊的。
+	// 实测 A3 单页渲染耗时：2000px → 1.00s / 75KB，4096px → 0.91s / 213KB
+	// （耗时主要是进程启动，与像素数几乎无关），所以放宽到 4096 是划算的。
+	// 注意：前端会把超过上限的值先夹到 4096，两边不一致时这里会静默降采样，
+	// 表现为"前端以为渲染了 4096，实际拿到 2000"——很难查，务必同步改。
+	if width > 4096 {
+		width = 4096
 	}
 	if strings.TrimSpace(pages) == "" {
 		pages = "all"

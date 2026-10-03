@@ -60,13 +60,31 @@ export type WSSource = {
 
 const THUMB_WIDTH = 150;
 
-// 大图渲染宽度。分两档：正常一档，放大时换高分辨率档——
-// 只把 900px 的图拉伸放大会是糊的，而"放大就是为了看清小字"，
-// 所以跨过阈值时重新渲染当前页，而不是拿旧图凑合。
+// 大图渲染宽度的**兜底档位**，正常路径不走这里。
+//
+// 正常路径：画布实测出"这一屏实际要画多少设备像素"，经 setRenderWidth 推过来
+// （见 state 里的 renderWidthPx）。这两个常数只在画布还没量出来时顶一下。
+//
+// 保留它们是因为旧口径的教训值得记下来：900 这个数字是按 A4（595pt）配的，
+// 相当于 1.51px/pt；而 A3 图纸宽 1191pt，同样的 900px 只剩 0.76px/pt
+// ——约 54 DPI，图纸一拖进来就糊，根因就在这里。
 const PREVIEW_WIDTH = 900;
 const PREVIEW_WIDTH_HI = 2000;
-/** 超过这个缩放倍数就换成高分辨率档 */
+/** 没量到宽度时的兜底：自定义倍率超过这个值就用高分辨率那档 */
 const HI_RES_THRESHOLD = 1.2;
+
+/**
+ * 渲染宽度的量化步长（设备像素）。
+ *
+ * 必须量化：拖窗口、连续缩放会让"所需宽度"几乎每像素都在变，不量化就是
+ * 每变一点就换一个文件名、重渲染一次，磁盘上还会堆出无数个宽度的 PNG。
+ * 向上取整而不是就近取整——宁可多渲染一点，也不要差一点点导致放大发虚。
+ */
+const RENDER_WIDTH_STEP = 256;
+/** 下限沿用旧档位：窗口很小时的兜底，保证不会比以前更差 */
+const RENDER_WIDTH_MIN = 900;
+/** 上限：再大 PNG 的生成时间与内存都不划算（4096 宽已是 12MPix 级别） */
+const RENDER_WIDTH_MAX = 4096;
 
 /** 撤销栈上限。一份 1000 页清单的快照约 60KB，100 步也只有 6MB。 */
 const UNDO_LIMIT = 100;
@@ -220,10 +238,25 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         thumbWidth: 150,
         /** 画布视图：单页 / 双页。同样是视图偏好 */
         viewMode: "single" as "single" | "dual" | "continuous",
+        /** 窗口与界面偏好，打开新文档时保持，不计入未保存状态。 */
+        compactMode: false,
+        alwaysOnTop: false,
+        normalWindowSize: null as { w: number; h: number } | null,
         /** 画布缩放：绝对倍数（1 = 渲染图 1 像素对 1 CSS 像素）。视图偏好，不计入未保存 */
         zoom: 1,
         /** "fit" = 自动适应窗口（随窗口大小变化）；"custom" = 用户指定倍数 */
         zoomMode: "fit" as "fit" | "custom",
+        /**
+         * 由画布实测推来的渲染宽度（设备像素）。0 = 还没量到，退回兜底档位。
+         *
+         * 为什么不能用一个常数（比如 900）：渲染宽度是"像素"，而页面大小是"点"，
+         * 两者之间差一个随页面尺寸变化的倍数。固定 900px 对 A4 尚可，对 A3/A2
+         * 图纸就是在严重降采样。按"实际显示宽度 × devicePixelRatio"给，
+         * 屏幕上才是 1 个栅格像素对 1 个设备像素，不放大就不会糊。
+         *
+         * 视图偏好，不计入"未保存"。
+         */
+        renderWidthPx: 0,
         /** 撤销 / 重做栈，存的是清单快照 */
         past: [] as WSItem[][],
         future: [] as WSItem[][],
@@ -281,8 +314,15 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         mainPath(state): string {
             return Object.values(state.sources)[0]?.path ?? "";
         },
-        /** 当前该用多大的分辨率渲染大图 */
+        /**
+         * 当前该用多大的分辨率渲染大图（设备像素）。
+         *
+         * 优先用画布实测值——它正好等于"这一屏要画多少设备像素"，
+         * 所以屏幕上是 1:1，不会被浏览器放大而发虚。
+         * 还没量到（刚打开、画布未布局）才退回按 A4 调好的固定档位。
+         */
         previewWidth(state): number {
+            if (state.renderWidthPx > 0) return state.renderWidthPx;
             const z = state.zoomMode === "custom" ? state.zoom : 1;
             return z > HI_RES_THRESHOLD ? PREVIEW_WIDTH_HI : PREVIEW_WIDTH;
         },
@@ -325,11 +365,34 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         },
 
         /**
-         * 切换大图渲染分辨率档位。
+         * 画布实测后，把"这一屏需要多少设备像素"推过来。
          *
-         * 放大时如果继续用 900px 的图拉伸，字是糊的——而"放大"这件事的
-         * 全部意义就是看清小字，所以跨过阈值要换高分辨率档重渲染。
-         * 换档会在缓存里留下两套图，来回缩放因此不会每次都重渲染。
+         * 只有量化后的档位真的变了才动 previewWidth——否则拖窗口时会不停重渲染。
+         * 变了必须主动重取当前页：previewKey 里带着宽度，宽度一变旧图就查不到了。
+         */
+        setRenderWidth(cssWidth: number, dpr: number) {
+            const want = Math.max(0, cssWidth) * Math.max(1, dpr || 1);
+            if (want <= 0) return;
+            const stepped = Math.ceil(want / RENDER_WIDTH_STEP) * RENDER_WIDTH_STEP;
+            const next = Math.max(RENDER_WIDTH_MIN, Math.min(RENDER_WIDTH_MAX, stepped));
+            if (next === this.renderWidthPx) return;
+            const before = this.previewWidth;
+            this.renderWidthPx = next;
+            if (this.previewWidth === before) return;
+            // 连续模式不在这里补：那边由可见性观察按 previewWidth 重新取图
+            // （Workspace.vue 里监听 previewWidth 的那个 watch）。这里再 focusItem
+            // 只会动 preview/previewB 这两个单页视图专用槽位，白渲染一次。
+            if (this.viewMode !== "continuous" && this.current) {
+                void this.focusItem(this.current);
+            }
+        },
+
+        /**
+         * 切换缩放倍率。
+         *
+         * 放大后需要的像素更多，但**不在这里换档**：要渲染多宽由画布重新实测
+         * （fitW 变了 → setRenderWidth），由那边统一负责重取当前页。
+         * 下面这段 before/after 只在"画布还没量出宽度"的兜底路径上才真的生效。
          */
         setZoom(z: number) {
             const next = Math.max(0.15, Math.min(6, z));
@@ -1029,12 +1092,14 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
          * scopeSelected 为真时，把选中页解析成**输出文档里的下标**；
          * 为空数组表示"哪一页都不加"（与缺省的"全部"是不同的语义）。
          */
-        decorOptions(): Record<string, unknown> {
+        decorOptions(ids?: string[] | null): Record<string, unknown> {
             const opts: Record<string, unknown> = {};
+            const picked = ids ? new Set(ids) : null;
+            const exported = this.seq.filter((it) => !picked || picked.has(it.id));
             const scopeOf = (useSelected: boolean): number[] | null => {
                 if (!useSelected) return null;
                 const idx: number[] = [];
-                this.seq.forEach((it, i) => {
+                exported.forEach((it, i) => {
                     if (this.selected.includes(it.id)) idx.push(i);
                 });
                 return idx;
@@ -1135,7 +1200,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             try {
                 const payload = JSON.stringify({
                     items: JSON.parse(this.itemsPayload(ids)),
-                    options: this.decorOptions(),
+                    options: this.decorOptions(ids),
                 });
                 const msg: string = await WorkspaceExport(
                     payload,
@@ -1156,10 +1221,8 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                     const hitSource = Object.values(this.sources).some((s) => s.path === outFile);
                     if (opts.adopt || hitSource || noSource) {
                         await this.open(outFile);
-                    } else if (ids === null) {
-                        // 全部内容已落盘，视为没有未保存的更改
-                        this.markSaved();
                     }
+                    // 导出副本不更新保存指纹：主文件仍有未保存的更改。
                 }
                 // 导出图片不改变文档与它自己文件的关系，因此什么都不做
                 return msg;

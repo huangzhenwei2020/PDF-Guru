@@ -422,9 +422,9 @@ def _build_pdf(plan_path: str, output_path: str, compress: bool = False):
                         nh = float(r.get("h", 0.0))
                         x0 = mb.x0 + nx * W
                         x1 = mb.x0 + (nx + nw) * W
-                        # 归一化的 y 原点在【上】，PDF 坐标原点在【下】，需要翻转
-                        y1 = mb.y1 - ny * H
-                        y0 = mb.y1 - (ny + nh) * H
+                        # PyMuPDF 的页面坐标同样从左上角开始，无需转成 PDF 原生坐标。
+                        y0 = ny * H
+                        y1 = (ny + nh) * H
                         return fitz.Rect(x0, y0, x1, y1)
 
                     for m in masks:
@@ -442,7 +442,7 @@ def _build_pdf(plan_path: str, output_path: str, compress: bool = False):
 
                 rot = int(item.get("rotation", 0)) % 360
                 if rot:
-                    newpage.set_rotation(rot)
+                    newpage.set_rotation((newpage.rotation + rot) % 360)
 
             if writer.page_count == 0:
                 raise ValueError("清单里没有任何页面，已取消导出")

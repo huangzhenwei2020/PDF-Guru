@@ -43,6 +43,7 @@ export namespace main {
 	    path: string;
 	    pageCount: number;
 	    pages: WSPageInfo[];
+	    note: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WSDocInfo(source);
@@ -54,6 +55,7 @@ export namespace main {
 	        this.path = source["path"];
 	        this.pageCount = source["pageCount"];
 	        this.pages = this.convertValues(source["pages"], WSPageInfo);
+	        this.note = source["note"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
