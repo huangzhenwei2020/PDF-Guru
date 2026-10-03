@@ -1,12 +1,13 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 
 	wails_runtime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-// workspace_dialogs.go —— 工作区用的文件对话框。
+// workspace_pickers.go —— 工作区用的文件对话框。
 //
 // 为什么不直接用 utils.go 里的 SelectFile / SelectMultipleFiles / SelectDir / SaveFile：
 //   1) 那几个是无参的，弹出的对话框没有标题、没有类型过滤，用户得在一堆文件里自己找；
@@ -21,11 +22,16 @@ import (
 //
 // 多个扩展名用分号分隔：Windows 的原生对话框（IFileDialog）认这种写法，
 // 而 Wails 把 Pattern 原样透传给系统对话框，所以这里不能写成 "*.png|*.jpg"。
+//
+// 每种类型都补一条「所有文件」：过滤器只是**建议**，用户手里是什么格式
+// 只有他自己知道。少了这一条，遇到列表外的扩展名就会"文件在眼前却选不到"。
 func wsKindFilters(kind string) []wails_runtime.FileFilter {
+	all := wails_runtime.FileFilter{DisplayName: "所有文件 (*.*)", Pattern: "*.*"}
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "pdf":
 		return []wails_runtime.FileFilter{
 			{DisplayName: "PDF 文档 (*.pdf)", Pattern: "*.pdf"},
+			all,
 		}
 	case "image":
 		return []wails_runtime.FileFilter{
@@ -33,6 +39,7 @@ func wsKindFilters(kind string) []wails_runtime.FileFilter {
 				DisplayName: "图片 (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp)",
 				Pattern:     "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp",
 			},
+			all,
 		}
 	case "office":
 		return []wails_runtime.FileFilter{
@@ -40,6 +47,19 @@ func wsKindFilters(kind string) []wails_runtime.FileFilter {
 				DisplayName: "Word / PowerPoint / Excel (*.docx;*.pptx;*.xlsx 等)",
 				Pattern:     "*.docx;*.doc;*.docm;*.rtf;*.odt;*.pptx;*.ppt;*.pptm;*.odp;*.xlsx;*.xls;*.xlsm;*.xlsb;*.ods;*.csv",
 			},
+			all,
+		}
+	case "anydoc":
+		// 能拖进来的都算：一次性列全，省得用户为了找一种格式来回切过滤器
+		return []wails_runtime.FileFilter{
+			{
+				DisplayName: "支持的文档与图片",
+				Pattern: "*.pdf;*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp;" +
+					"*.xps;*.epub;*.mobi;*.fb2;*.cbz;*.svg;" +
+					"*.doc;*.docx;*.rtf;*.odt;*.ppt;*.pptx;*.odp;*.xls;*.xlsx;*.ods;*.csv",
+			},
+			{DisplayName: "PDF 文档 (*.pdf)", Pattern: "*.pdf"},
+			all,
 		}
 	}
 	return nil
@@ -110,6 +130,9 @@ func (a *App) WorkspacePickDir(title string) string {
 // 固定加 PDF 过滤器：这两个入口的产物都是 PDF，加上过滤器能省得用户手打个 .pdf，
 // 也能避免存成别的扩展名之后程序再也打不开。
 // DefaultFilename 由前端按当前文档名推出来（Workspace.vue 的 suggestName）。
+//
+// 用户没写扩展名时这里补上 .pdf：Windows 对话框在部分情况下不会自动补，
+// 存出一个没有扩展名的文件会双击打不开，看起来像是程序写错了。
 func (a *App) WorkspaceSaveDialog(title string, defaultName string) string {
 	d, err := wails_runtime.SaveFileDialog(a.ctx, wails_runtime.SaveDialogOptions{
 		Title:            wsTitle(title, "保存"),
@@ -120,6 +143,12 @@ func (a *App) WorkspaceSaveDialog(title string, defaultName string) string {
 	if err != nil {
 		logger.Errorln(err)
 		return ""
+	}
+	if d == "" {
+		return ""
+	}
+	if !strings.EqualFold(filepath.Ext(d), ".pdf") {
+		d += ".pdf"
 	}
 	rememberDir(d)
 	return d

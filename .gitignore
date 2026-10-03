@@ -1,8 +1,22 @@
 build/bin
 node_modules
 frontend/dist
+
+# 测试产物与运行期文件
 *.pdf
-*tmp*
-*log*
 config.json
 cmd_output.json
+
+# 临时文件与日志：**必须写成精确规则**。
+#
+# 这里原来是 `*tmp*` 和 `*log*`，本意是忽略临时文件和日志，但通配符会连源码一起吞：
+# `*log*` 命中了 workspace_dialogs.go（"dia-log-s" 里有 log），
+# 那个文件因此**从未被提交**，别人克隆下来直接编译不过，
+# 还得重新实现一遍才知道缺了什么——排查成本极高。
+#
+# 教训：忽略规则宁可窄一点，不确定时先跑 `git check-ignore -v <文件>` 看看是谁匹配的。
+*.log
+*.tmp
+*.bak
+tmp/
+logs/

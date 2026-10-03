@@ -2140,6 +2140,10 @@ export default defineComponent({
                     if (script) {
                         const log = await runOps(store, script, {
                             openExport,
+                            // 置顶与紧凑模式是**窗口级**行为，浏览器里测不出来，
+                            // 只能由外部脚本用 OS 层面的事实核对（GetWindowLong / GetWindowRect）
+                            togglePin: () => toggleAlwaysOnTop(),
+                            toggleCompact: () => toggleCompact(),
                             openDecor: () => {
                                 decorVisible.value = true;
                             },

@@ -345,6 +345,20 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 log.push(`saveas -> ${msg} 主文件=${store.mainPath} 未保存=${store.dirty}`);
                 break;
             }
+            // pin / compact —— 窗口级行为，浏览器里测不出来，
+            // 只能由外部脚本用操作系统的事实核对：
+            //   pin      切换置顶（外部读 GetWindowLong 的 WS_EX_TOPMOST）
+            //   compact  切换精简/完整模式（外部读 GetWindowRect 看窗口尺寸变化）
+            case "pin": {
+                ui?.togglePin?.();
+                log.push("pin:已切换置顶");
+                break;
+            }
+            case "compact": {
+                await ui?.toggleCompact?.();
+                log.push("compact:已切换模式");
+                break;
+            }
             // exportdlg —— 打开导出对话框（供截图确认格式/范围选项）
             case "exportdlg": {
                 // exportdlg[:格式] —— 可先指定格式再打开，便于截图确认各格式的界面
