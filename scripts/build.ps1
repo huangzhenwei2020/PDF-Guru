@@ -101,10 +101,11 @@ if (Test-Path $internal) {
     Write-Warning "没有找到 _internal 目录，pdf.exe 可能无法启动"
 }
 
-foreach ($f in 'ocr.py', 'convert_external.py') {
+foreach ($f in 'ocr.py', 'ocr_worker.py', 'convert_external.py') {
     $src = Join-Path $repo "thirdparty\$f"
     if (Test-Path $src) { Copy-Item $src (Join-Path $binDir $f) -Force }
 }
+Copy-Item -LiteralPath (Join-Path $repo 'frontend\src\assets\pdf-text.NOTICE') -Destination (Join-Path $binDir 'pdf-text.NOTICE') -Force
 
 # Office -> PDF 的 PowerShell 脚本：它要和 exe 放在一起（Go 侧按 exe 目录找它）。
 # 用 PowerShell + COM 而不是 Python 库，是因为外部脚本跑的是**用户自己的 Python**，

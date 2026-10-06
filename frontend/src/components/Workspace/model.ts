@@ -20,6 +20,14 @@ export type Rotation = 0 | 90 | 180 | 270;
  */
 export type NormRect = { x: number; y: number; w: number; h: number };
 
+export type TextRun = {
+    id: string; text: string; rect: NormRect; fontSize: number;
+    font: string; color: string; angle: number;
+    source: 'native' | 'ocr' | 'new'; confidence?: number;
+};
+export type TextEdit = TextRun & { originalRect?: NormRect; background?: string };
+export type TextRuns = { width: number; height: number; runs: TextRun[]; seconds?: number; model?: string };
+
 /** 挂在单个页面上的非破坏式操作。导出时才落到 PDF，因此撤销天然可用。 */
 export type PageOps = {
     /** 裁剪：导出后页面即为该区域 */
@@ -28,6 +36,7 @@ export type PageOps = {
     masks?: { rect: NormRect; color: string; opacity: number }[];
     /** 导出时删除该页的全部批注 */
     removeAnnots?: boolean;
+    textEdits?: TextEdit[];
 };
 
 /** 引用源文档中的某一页。 */
@@ -204,6 +213,7 @@ export function cloneOps(ops?: PageOps): PageOps | undefined {
     if (ops.crop) out.crop = { ...ops.crop };
     if (ops.masks) out.masks = ops.masks.map((m) => ({ rect: { ...m.rect }, color: m.color, opacity: m.opacity }));
     if (ops.removeAnnots) out.removeAnnots = true;
+    if (ops.textEdits) out.textEdits = ops.textEdits.map((e) => ({ ...e, rect: { ...e.rect }, originalRect: e.originalRect ? { ...e.originalRect } : undefined }));
     return out;
 }
 
@@ -274,8 +284,14 @@ export function clearOps(seq: WSItem[], ids: string[]): WSItem[] {
     const idSet = new Set(ids);
     return seq.map((it) => {
         if (!idSet.has(it.id) || it.kind !== "page" || !it.ops) return it;
-        const { ops, ...rest } = it;
-        return rest as PageItem;
+        const ops = cloneOps(it.ops)!;
+        delete ops.crop;
+        delete ops.masks;
+        if (!Object.keys(ops).length) {
+            const { ops: _drop, ...rest } = it;
+            return rest;
+        }
+        return { ...it, ops };
     });
 }
 

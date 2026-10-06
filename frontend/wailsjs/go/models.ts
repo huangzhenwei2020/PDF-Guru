@@ -77,7 +77,27 @@ export namespace main {
 		}
 	}
 	
-	export class WSThumb {
+	export class WSTextPreview {
+	    pageIndex: number;
+	    url: string;
+	    width: number;
+	    height: number;
+	    editsJSON: string;
+
+	    static createFrom(source: any = {}) {
+	        return new WSTextPreview(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pageIndex = source["pageIndex"];
+	        this.url = source["url"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	        this.editsJSON = source["editsJSON"];
+	    }
+	}
+export class WSThumb {
 	    pageIndex: number;
 	    url: string;
 	    width: number;

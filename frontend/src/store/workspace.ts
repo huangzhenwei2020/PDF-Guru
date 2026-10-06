@@ -10,6 +10,7 @@ import {
     WorkspaceSetDirty,
     WorkspaceAutoOpenPath,
     WorkspaceAutoOps,
+    WorkspaceTextPreview,
 } from "../../wailsjs/go/main/App";
 import {
     allIds,
@@ -32,6 +33,7 @@ import {
     snapshot,
     type NormRect,
     type WSItem,
+    type TextEdit,
 } from "../components/Workspace/model";
 
 export type WSPage = {
@@ -434,6 +436,10 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         /** 取某一项的缩略图（空白页没有缩略图，返回 null）。 */
         thumbOf(item: WSItem): WSThumb | null {
             if (item.kind !== "page") return null;
+            if (item.ops?.textEdits?.length) {
+                const edited = this.previewCache[this.itemPreviewKey(item)];
+                if (edited) return { ...edited, width: THUMB_WIDTH, height: Math.round(edited.height*THUMB_WIDTH/edited.width) };
+            }
             return this.thumbs[this.thumbKey(item.docId, item.pageIndex)] ?? null;
         },
 
@@ -664,7 +670,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         /** 取某一项的大图（带缓存与在途去重）。 */
         async fetchPreview(item: WSItem): Promise<WSThumb | null> {
             if (item.kind !== "page") return null;
-            const key = this.previewKey(item.docId, item.pageIndex);
+            const key = this.itemPreviewKey(item);
             const cached = this.previewCache[key];
             if (cached) return cached;
 
@@ -676,6 +682,9 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 // 先取出到局部变量，避免 await 期间档位变化导致键与请求不一致。
                 const width = this.previewWidth;
                 task = (async () => {
+                    if (item.ops?.textEdits?.length) {
+                        return await WorkspaceTextPreview(docId, item.pageIndex, JSON.stringify(item.ops.textEdits), width) as WSThumb;
+                    }
                     const list: any = await WorkspaceThumbs(docId, String(pageNo), width);
                     return list && list.length ? (list[0] as WSThumb) : null;
                 })();
@@ -692,8 +701,13 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
         },
 
         /** 连续模式：读取已缓存的预览（响应式读法）。没有就返回 null。 */
-        previewOf(docId: string, pageIndex: number): WSThumb | null {
-            return this.previewCache[this.previewKey(docId, pageIndex)] ?? null;
+        itemPreviewKey(item: WSItem): string {
+            if (item.kind !== "page") return "";
+            const base = this.previewKey(item.docId, item.pageIndex);
+            return item.ops?.textEdits?.length ? `${base}:${JSON.stringify(item.ops.textEdits)}` : base;
+        },
+        previewOf(docId: string, pageIndex: number, item?: WSItem): WSThumb | null {
+            return this.previewCache[item ? this.itemPreviewKey(item) : this.previewKey(docId, pageIndex)] ?? null;
         },
 
         /**
@@ -703,11 +717,12 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
          * 而连续模式要同时显示很多页，所以结果直接进 previewCache，由模板按页读取。
          * 并发去重沿用 inflightPreviews，因此来回滚动不会重复渲染同一页。
          */
-        async ensurePreviewsFor(targets: { docId: string; pageIndex: number }[]) {
+        async ensurePreviewsFor(targets: { docId: string; pageIndex: number; id?: string }[]) {
             const jobs: Promise<unknown>[] = [];
             const trace: string[] = [];
             for (const t of targets) {
-                const key = this.previewKey(t.docId, t.pageIndex);
+                const item = this.seq.find((it) => it.id === t.id) ?? { kind: "page", docId: t.docId, pageIndex: t.pageIndex } as WSItem;
+                const key = this.itemPreviewKey(item);
                 if (this.previewCache[key]) {
                     trace.push(`${t.pageIndex}:cached`);
                     continue;
@@ -717,7 +732,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                     // 必须带上 kind —— fetchPreview 第一行就是 `if (item.kind !== "page") return null`，
                     // 少了它会被静默当成非页面直接返回 null：不发请求、不报错、缓存也不动，
                     // 表现为"连续模式一片空白"。这个坑很隐蔽，因为返回的是 null 而不是异常。
-                    this.fetchPreview({ kind: "page", docId: t.docId, pageIndex: t.pageIndex } as any)
+                    this.fetchPreview(item)
                         .then((g) => {
                             trace.push(`${t.pageIndex}:${g ? "got" : "empty"}`);
                             return g;
@@ -939,6 +954,29 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
             this.apply(next, ids);
         },
 
+        applyTextEdit(id: string, edit: TextEdit) {
+            const next = this.seq.map((it) => {
+                if (it.id !== id || it.kind !== "page") return it;
+                const ops = cloneOps(it.ops) ?? {};
+                ops.textEdits = [...(ops.textEdits ?? []).filter((e) => e.id !== edit.id), { ...edit, rect: { ...edit.rect }, originalRect: edit.originalRect ? { ...edit.originalRect } : undefined }];
+                return { ...it, ops };
+            });
+            this.apply(next);
+        },
+        resetTextEdit(id: string, runID: string) {
+            this.apply(this.seq.map((it) => {
+                if (it.id !== id || it.kind !== "page") return it;
+                const ops = cloneOps(it.ops) ?? {};
+                ops.textEdits = (ops.textEdits ?? []).filter((e) => e.id !== runID);
+                if (!ops.textEdits.length) delete ops.textEdits;
+                if (!Object.keys(ops).length) {
+                    const { ops: _drop, ...rest } = it;
+                    return rest;
+                }
+                return { ...it, ops };
+            }));
+        },
+
         /** 给若干页追加一块遮盖。 */
         applyMask(ids: string[], rect: NormRect, color: string, opacity: number) {
             const idSet = new Set(ids);
@@ -976,7 +1014,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 const ops = cloneOps(it.ops) ?? {};
                 if (allMarked) delete ops.removeAnnots;
                 else ops.removeAnnots = true;
-                if (!ops.crop && !ops.masks && !ops.removeAnnots) {
+                if (!ops.crop && !ops.masks && !ops.removeAnnots && !ops.textEdits?.length) {
                     const { ops: _drop, ...rest } = it;
                     return rest as typeof it;
                 }

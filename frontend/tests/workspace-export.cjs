@@ -10,6 +10,7 @@ const pinia = require('pinia');
 let captured;
 let failExport = false;
 let docSeq = 0;
+const textPreviewRequests = [];
 const bridge = {
     WorkspaceExport: async (payload) => {
         captured = JSON.parse(payload);
@@ -19,6 +20,10 @@ const bridge = {
     WorkspaceSetDirty: async () => {},
     WorkspaceOpen: async (file) => ({ docId: `d${++docSeq}`, path: file, pageCount: 3, pages: [] }),
     WorkspaceThumbs: async () => [],
+    WorkspaceTextPreview: async (docId, pageIndex, edits, width) => {
+        textPreviewRequests.push(JSON.parse(edits));
+        return { pageIndex, url: `preview-${textPreviewRequests.length}`, width, height: width };
+    },
 };
 
 function load(relative) {
@@ -86,7 +91,43 @@ async function main() {
     store.decor.pageNumber.scopeSelected = false;
     await store.exportTo('E:/all-decor.pdf', { ids: [store.seq[2].id] });
     assert.equal('scope' in captured.options.pageNumber, false);
-    console.log('Workspace export regression checks passed.');
+    await store.open('E:/text.pdf');
+    const id = store.seq[0].id;
+    const edit = { id: 'native-0', source: 'native', text: 'Edited', fontSize: 12, font: 'auto', color: '#000000', angle: 0,
+        rect: { x: .1, y: .2, w: .5, h: .1 }, originalRect: { x: .1, y: .2, w: .3, h: .1 } };
+    store.applyTextEdit(id, edit);
+    assert.equal(store.dirty, true, 'text changes must mark the document dirty');
+    edit.rect.x = .9;
+    assert.equal(store.seq[0].ops.textEdits[0].rect.x, .1, 'draft mutation must not alter stored edits');
+    store.undo();
+    assert.equal(store.seq[0].ops, undefined);
+    assert.equal(store.dirty, false);
+    store.redo();
+    store.doDuplicate([id]);
+    const duplicate = store.seq[1];
+    store.applyTextEdit(duplicate.id, { ...store.seq[0].ops.textEdits[0], text: 'Different' });
+    await store.fetchPreview(store.seq[0]);
+    await store.fetchPreview(store.seq[1]);
+    assert.equal(textPreviewRequests.length, 2, 'copies of the same source page need independent edited previews');
+    assert.equal(textPreviewRequests[0][0].text, 'Edited');
+    assert.equal(textPreviewRequests[1][0].text, 'Different');
+    assert.equal(store.thumbOf(store.seq[0]).url, 'preview-1', 'thumbnail should reuse the edited preview');
+    assert.equal(store.thumbOf(store.seq[0]).width, 150);
+    store.applyCrop([id], { x: .1, y: .1, w: .8, h: .8 });
+    store.clearOpsOn([id]);
+    assert.equal(store.seq[0].ops.crop, undefined);
+    assert.equal(store.seq[0].ops.textEdits[0].text, 'Edited', 'clear crop/masks must retain text changes');
+    await store.exportTo('E:/edited.pdf');
+    assert.equal(captured.items[0].ops.textEdits[0].text, 'Edited');
+    store.resetTextEdit(id, 'native-0');
+    assert.equal(store.seq[0].ops?.textEdits, undefined);
+    assert.equal(store.seq[1].ops.textEdits[0].text, 'Different');
+    await store.open('E:/restore-text.pdf');
+    const restoreID = store.seq[0].id;
+    store.applyTextEdit(restoreID, { ...edit, rect: { x:.1,y:.2,w:.5,h:.1 } });
+    store.resetTextEdit(restoreID, edit.id);
+    assert.equal(store.dirty, false, 'restoring the only text change must return to saved state');
+    console.log('Workspace export and text-edit regression checks passed.');
 }
 
 main().catch((err) => { console.error(err); process.exitCode = 1; });

@@ -44,6 +44,8 @@
                 <span class="ws-sep"></span>
                 <a-button :type="mode === 'crop' ? 'primary' : 'text'" @click="mode = mode === 'crop' ? 'view' : 'crop'" :disabled="!canEdit"><template #icon><scissor-outlined /></template>裁剪</a-button>
                 <a-button :type="mode === 'mask' ? 'primary' : 'text'" @click="mode = mode === 'mask' ? 'view' : 'mask'" :disabled="!canEdit"><template #icon><border-outlined /></template>遮盖</a-button>
+                <a-button type="text" @click="openTextEditor('native')" :disabled="!store.currentItem || store.currentItem.kind !== 'page'"><template #icon><font-size-outlined /></template>文字</a-button>
+                <a-button type="text" @click="openTextEditor('ocr')" :disabled="!store.currentItem || store.currentItem.kind !== 'page'">OCR</a-button>
                 <a-dropdown :trigger="['click']">
                     <a-button type="text"><template #icon><more-outlined /></template>更多 <down-outlined /></a-button>
                     <template #overlay><a-menu @click="onCommandMenu">
@@ -153,13 +155,13 @@
 
                             <!-- 连续模式：大图按可见性补，没到位就显示占位 -->
                             <template v-else-if="isCont">
-                                <template v-if="store.previewOf(v.item.docId, v.item.pageIndex)">
+                                <template v-if="store.previewOf(v.item.docId, v.item.pageIndex, v.item)">
                                     <div class="pv-box" :style="{
                                         width: v.dispW + 'px',
                                         height: v.dispH + 'px',
                                         transform: `scale(${v.scale})`,
                                     }">
-                                        <img :src="url(store.previewOf(v.item.docId, v.item.pageIndex)!.url)" :style="{
+                                        <img :src="url(store.previewOf(v.item.docId, v.item.pageIndex, v.item)!.url)" :style="{
                                             width: v.imgW + 'px',
                                             height: v.imgH + 'px',
                                             transform: `translate(-50%, -50%) rotate(${v.rot}deg)`,
@@ -262,6 +264,7 @@
             theme={{ themeAttr }} · urlMode={{ urlMode }}
         </div>
 
+        <TextEditor v-model:visible="textEditorVisible" :initial-source="textEditorSource" />
         <!-- 插入空白页 -->
         <a-modal v-model:visible="blankVisible" title="插入空白页" ok-text="插入" cancel-text="取消"
             @ok="doInsertBlank">
@@ -585,6 +588,7 @@ import {
 } from './model';
 import { runOps } from './devops';
 import ThumbRail from './ThumbRail.vue';
+import TextEditor from './TextEditor.vue';
 import appIcon from '../../assets/appicon.png';
 import { zoomAnchorScroll } from './viewport';
 
@@ -616,6 +620,7 @@ export default defineComponent({
         ScissorOutlined, DragOutlined, MinusOutlined, FullscreenOutlined,
         ColumnWidthOutlined, UnorderedListOutlined, LeftOutlined, RightOutlined,
         ThumbRail,
+        TextEditor,
     },
     setup(_props, { emit }) {
         const store = useWorkspaceState();
@@ -758,6 +763,13 @@ export default defineComponent({
         );
 
         const canEdit = computed(() => store.targetIds.length > 0);
+        const textEditorVisible = ref(false);
+        const textEditorSource = ref('native');
+        const openTextEditor = (source: string) => {
+            if (store.currentItem?.kind !== 'page') return;
+            textEditorSource.value = source;
+            textEditorVisible.value = true;
+        };
 
         /** 诊断用：当前显示的大图实际是哪一页，与期望不一致时直接标出来 */
         const previewPage = computed(() => {
@@ -979,7 +991,7 @@ export default defineComponent({
             if (!contObserver) {
                 contObserver = new IntersectionObserver(
                     (entries) => {
-                        const need: { docId: string; pageIndex: number }[] = [];
+                        const need: { docId: string; pageIndex: number; id: string }[] = [];
                         for (const en of entries) {
                             const node = en.target as HTMLElement;
                             const id = node.dataset.id || '';
@@ -988,7 +1000,7 @@ export default defineComponent({
                                 visibleIds.add(id);
                                 const docId = node.dataset.doc || '';
                                 const pageIndex = Number(node.dataset.page);
-                                if (docId && pageIndex >= 0) need.push({ docId, pageIndex });
+                                if (docId && pageIndex >= 0) need.push({ docId, pageIndex, id });
                             } else {
                                 visibleIds.delete(id);
                             }
@@ -1055,7 +1067,7 @@ export default defineComponent({
         };
 
         watch(
-            () => [isCont.value, store.seq.length, store.previewWidth] as const,
+            () => [isCont.value, store.seq, store.previewWidth] as const,
             async () => {
                 await registerContPages();
                 if (!isCont.value) return;
@@ -1065,12 +1077,12 @@ export default defineComponent({
                 // 尺寸或档位变化再回调一次；而 previewKey 里带着宽度，档位一换旧图
                 // 立刻查不到，每页就都停在 loadingface 上——表现为"缩放之后连续
                 // 视图一片空白，滚一下才回来"。这里补上这一刀。
-                const need: { docId: string; pageIndex: number }[] = [];
+                const need: { docId: string; pageIndex: number; id: string }[] = [];
                 for (const id of visibleIds) {
                     const el = pageBoxes.get(id);
                     const docId = el?.dataset.doc || '';
                     const pageIndex = Number(el?.dataset.page);
-                    if (docId && pageIndex >= 0) need.push({ docId, pageIndex });
+                    if (docId && pageIndex >= 0) need.push({ docId, pageIndex, id });
                 }
                 if (need.length) void store.ensurePreviewsFor(need);
             }
@@ -2093,6 +2105,10 @@ export default defineComponent({
             { immediate: true, flush: 'sync' }
         );
 
+        watch(() => store.seq, () => {
+            if (!isCont.value && store.current) void store.focusItem(store.current);
+        });
+
         onMounted(async () => {
             store.loadCacheRoot();
             window.addEventListener('keydown', onKey);
@@ -2292,6 +2308,7 @@ export default defineComponent({
             imgFailed,
             origin,
             canEdit,
+            textEditorVisible, textEditorSource, openTextEditor,
             blankLabel,
             previewPage,
             views,
@@ -2451,6 +2468,13 @@ export default defineComponent({
 .ws-compact .ws-logo { width: 24px; height: 24px; }
 .ws-compact .ws-body { border: 0; }
 .ws-compact .ws-unsaved { font-size: 10px; }
+
+@media (max-width: 1150px) {
+    .ws:not(.ws-compact) .ws-top { gap: 4px; padding: 0 12px; }
+    .ws:not(.ws-compact) .ws-top :deep(.ant-btn) { padding-inline: 10px; }
+    .ws:not(.ws-compact) .ws-top :deep(.ant-btn-icon-only) { width: 32px; padding: 0; }
+    .ws:not(.ws-compact) .ws-top .ws-sep { margin: 0 2px; }
+}
 
 /* 分组之间的细竖线 */
 .ws-sep {

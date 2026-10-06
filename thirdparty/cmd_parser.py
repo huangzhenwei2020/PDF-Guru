@@ -381,6 +381,14 @@ def getParser():
     ws_info_parser.add_argument("input_path", type=str, help="pdf文件路径")
     ws_info_parser.add_argument("-o", "--output", type=str, required=True, help="结构信息 JSON 输出路径")
 
+    text_parser = sub_parsers.add_parser("ws-text-runs", help="工作区: 读取或预览文字")
+    text_parser.set_defaults(which="ws_text_runs")
+    text_parser.add_argument("input_path")
+    text_parser.add_argument("--page-index", type=int, required=True)
+    text_parser.add_argument("--output", required=True)
+    text_parser.add_argument("--edits", default=None)
+    text_parser.add_argument("--width", type=int, default=1200)
+
     # ws-render: 批量渲染缩略图（必须批量，逐页调用会因进程冷启动而卡死）
     ws_render_parser = sub_parsers.add_parser("ws-render", help="工作区: 批量渲染页面缩略图")
     ws_render_parser.set_defaults(which="ws_render")

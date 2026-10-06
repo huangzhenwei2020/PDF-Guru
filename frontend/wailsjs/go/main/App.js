@@ -294,6 +294,10 @@ export function WorkspaceExport(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['WorkspaceExport'](arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
+export function WorkspaceOCR(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WorkspaceOCR'](arg1, arg2, arg3);
+}
+
 export function WorkspaceOpen(arg1) {
   return window['go']['main']['App']['WorkspaceOpen'](arg1);
 }
@@ -332,6 +336,14 @@ export function WorkspaceSaveDialog(arg1, arg2) {
 
 export function WorkspaceSetDirty(arg1) {
   return window['go']['main']['App']['WorkspaceSetDirty'](arg1);
+}
+
+export function WorkspaceTextPreview(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['WorkspaceTextPreview'](arg1, arg2, arg3, arg4);
+}
+
+export function WorkspaceTextRuns(arg1, arg2) {
+  return window['go']['main']['App']['WorkspaceTextRuns'](arg1, arg2);
 }
 
 export function WorkspaceThumbs(arg1, arg2, arg3) {

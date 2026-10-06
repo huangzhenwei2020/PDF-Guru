@@ -1,0 +1,4 @@
+# Isolated Python 3.11 runtime; deliberately not part of the frozen PDF backend.
+paddlepaddle==3.2.2
+paddleocr==3.3.3
+paddlex[ocr]==3.3.13

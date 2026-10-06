@@ -38,6 +38,7 @@ from watermark import (detect_watermark_index_helper,
                        watermark_pdf_by_pdf, watermark_pdf_by_text)
 from workspace import (workspace_build, workspace_convert, workspace_export,
                        workspace_info, workspace_merge_images, workspace_render)
+from workspace_text import text_command
 
 logger.add(logpath, rotation="1 week", retention="10 days", level="DEBUG", encoding="utf-8")
 
@@ -194,6 +195,8 @@ def main():
             delete_annot_pdf(doc_path=args.input_path, annot_types=args.annot_types, page_range=args.page_range, output_path=args.output)
     elif args.which == "ws_info":
         workspace_info(doc_path=args.input_path, output_path=args.output)
+    elif args.which == "ws_text_runs":
+        text_command(args.input_path, args.page_index, args.output, args.edits, args.width)
     elif args.which == "ws_render":
         workspace_render(doc_path=args.input_path, pages=args.pages, width=args.width, output_dir=args.output, manifest_path=args.manifest)
     elif args.which == "ws_build":

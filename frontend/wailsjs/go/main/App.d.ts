@@ -148,6 +148,8 @@ export function WorkspaceCacheRoot():Promise<string>;
 
 export function WorkspaceExport(arg1:string,arg2:string,arg3:string,arg4:number,arg5:boolean,arg6:boolean):Promise<string>;
 
+export function WorkspaceOCR(arg1:string,arg2:number,arg3:number):Promise<string>;
+
 export function WorkspaceOpen(arg1:string):Promise<main.WSDocInfo>;
 
 export function WorkspacePageImages(arg1:string,arg2:number,arg3:string):Promise<string>;
@@ -167,6 +169,10 @@ export function WorkspaceRememberDir(arg1:string):Promise<void>;
 export function WorkspaceSaveDialog(arg1:string,arg2:string):Promise<string>;
 
 export function WorkspaceSetDirty(arg1:boolean):Promise<void>;
+
+export function WorkspaceTextPreview(arg1:string,arg2:number,arg3:string,arg4:number):Promise<main.WSTextPreview>;
+
+export function WorkspaceTextRuns(arg1:string,arg2:number):Promise<string>;
 
 export function WorkspaceThumbs(arg1:string,arg2:string,arg3:number):Promise<Array<main.WSThumb>>;
 

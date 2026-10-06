@@ -404,6 +404,9 @@ def _build_pdf(plan_path: str, output_path: str, compress: bool = False):
                 # 尺寸必须取 mediabox —— page.rect 是旋转后的视图尺寸，
                 # 用它换算会让旋转过的页面上裁剪框跑到别处。
                 ops = item.get("ops") or {}
+                if ops.get("textEdits"):
+                    from workspace_text import apply_text_edits
+                    apply_text_edits(newpage, ops["textEdits"])
                 if ops.get("removeAnnots"):
                     # 先物化成列表再逐条删：边遍历生成器边删除并不可靠
                     for an in list(newpage.annots() or []):
