@@ -83,11 +83,11 @@ export namespace main {
 	    width: number;
 	    height: number;
 	    editsJSON: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WSTextPreview(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.pageIndex = source["pageIndex"];
@@ -97,7 +97,7 @@ export namespace main {
 	        this.editsJSON = source["editsJSON"];
 	    }
 	}
-export class WSThumb {
+	export class WSThumb {
 	    pageIndex: number;
 	    url: string;
 	    width: number;

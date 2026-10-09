@@ -2167,6 +2167,8 @@ export default defineComponent({
                                 shortcutVisible.value = true;
                             },
                             openText: () => doExtractText(),
+                            // 新的文字编辑器（native / ocr），供截图与原生输入验证驱动
+                            openTextEditor: (src: string) => openTextEditor(src),
                             openCtx: (x: number, y: number) => onCtx('', x, y),
                             handleDrop: (x: number, y: number, paths: string[]) =>
                                 handleFileDrop(x, y, paths),

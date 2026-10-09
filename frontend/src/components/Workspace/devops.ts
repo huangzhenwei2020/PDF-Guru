@@ -479,6 +479,12 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
                 log.push(`ctxmenu:${x},${y}`);
                 break;
             }
+            // textedit[:native|ocr] —— 打开新的文字编辑器（原生文字 / OCR 文字）
+            case "textedit": {
+                ui?.openTextEditor?.(arg || "native");
+                log.push(`textedit:${arg || "native"}`);
+                break;
+            }
             case "textdlg": {
                 await ui?.openText?.();
                 log.push("textdlg");
