@@ -7,7 +7,9 @@
         <a-button :type="source === 'ocr' ? 'primary' : 'default'" :loading="busy === 'ocr'" :disabled="!!busy && busy !== 'ocr'" @click="loadRuns('ocr')"><ScanOutlined />OCR 识别本页</a-button>
         <a-button :disabled="!!busy" @click="addText"><PlusOutlined />新增文字框</a-button>
       </div>
-      <span class="te-status" v-if="draft?.source === 'ocr'">OCR 置信度 {{ Math.round((draft.confidence || 0) * 100) }}%</span>
+          <!-- Windows 自带 OCR 不提供置信度（给 0），这时不显示百分比：
+         显示 "0%" 会让人以为识别得很差，其实是这个引擎不报这个数 -->
+    <span class="te-status" v-if="draft?.source === 'ocr' && (draft.confidence || 0) > 0">OCR 置信度 {{ Math.round((draft.confidence || 0) * 100) }}%</span>
       <span class="te-status">区域自动适配</span>
       <a-button type="text" aria-label="关闭文字编辑" :disabled="!!busy" @click="close"><CloseOutlined /></a-button>
     </header>

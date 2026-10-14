@@ -107,6 +107,10 @@ foreach ($f in 'ocr.py', 'ocr_worker.py', 'convert_external.py') {
 }
 Copy-Item -LiteralPath (Join-Path $repo 'frontend\src\assets\pdf-text.NOTICE') -Destination (Join-Path $binDir 'pdf-text.NOTICE') -Force
 
+# 系统自带 OCR 的 worker：Go 侧按 exe 目录找它。
+# 有这个文件，没装 PaddleOCR 运行时的机器也能用 OCR（零下载）。
+Copy-Item -LiteralPath (Join-Path $repo 'ocr_worker_win.ps1') -Destination (Join-Path $binDir 'ocr_worker_win.ps1') -Force
+
 # Office -> PDF 的 PowerShell 脚本：它要和 exe 放在一起（Go 侧按 exe 目录找它）。
 # 用 PowerShell + COM 而不是 Python 库，是因为外部脚本跑的是**用户自己的 Python**，
 # 而 PowerShell 和能不能调 COM 都是系统自带、无需额外依赖。
