@@ -766,6 +766,75 @@ def _export_dxf(pdf_path: str, out_dir: Path, prefix: str):
         doc.close()
 
 
+def _export_pptx(pdf_path: str, output_path: str, dpi: int = 150):
+    """把合成好的 PDF 逐页放进 PowerPoint（每页一张幻灯片），返回 (幻灯片数, 是否被夹过尺寸)。
+
+    做法是**每页渲成一张图再铺进幻灯片**，而不是把 PDF 直接塞进去：
+    PowerPoint 没有"嵌入 PDF 页"这种原生对象，能走的只有位图或 EMF/SVG。
+    选位图是因为它和"导出 PNG/JPG"共用同一条渲染路径——
+    两种导出必须看起来一模一样，另写一套矢量转换迟早会对不上。
+
+    幻灯片尺寸取**所有页里最大的那一个**，每页按比例缩放居中：
+    混排 A2/A4 的图纸不会被裁掉、也不会被放大到失真；代价是 A4 页周围留白边，
+    这比"某几页被裁掉一块"要好得多。
+
+    依赖 python-pptx —— 内置 Office 渲染器已经在用它，属于既有依赖，不新增负担。
+    """
+    from pptx import Presentation
+    from pptx.util import Emu
+
+    emu_per_pt = 12700.0  # 1pt = 12700 EMU，与 officedoc.py 保持一致
+    dpi = max(36, min(600, int(dpi or 150)))
+
+    doc = fitz.open(pdf_path)
+    tmpdir = tempfile.mkdtemp(prefix="pdfguru-pptx-")
+    clipped = False
+    try:
+        if doc.page_count == 0:
+            raise ValueError("清单里没有任何页面，已取消导出")
+
+        # 幻灯片尺寸 = 最大页，并夹到 PowerPoint 的上限（56 英寸 = 4032pt，
+        # 超了 PowerPoint 直接打不开文件）
+        max_w = max(doc[i].rect.width for i in range(doc.page_count))
+        max_h = max(doc[i].rect.height for i in range(doc.page_count))
+        lim = 4032.0
+        if max_w > lim or max_h > lim:
+            k = min(lim / max_w, lim / max_h)
+            max_w, max_h = max_w * k, max_h * k
+            clipped = True
+
+        prs = Presentation()
+        prs.slide_width = Emu(int(max_w * emu_per_pt))
+        prs.slide_height = Emu(int(max_h * emu_per_pt))
+        blank = prs.slide_layouts[6]  # 6 = 空白版式，免得带上占位符
+
+        zoom = dpi / 72.0
+        matrix = fitz.Matrix(zoom, zoom)
+        for i in range(doc.page_count):
+            page = doc[i]
+            pix = page.get_pixmap(matrix=matrix)
+            pix.set_dpi(dpi, dpi)
+            img = os.path.join(tmpdir, f"page-{i + 1}.png")
+            pix.save(img)
+
+            pw, ph = page.rect.width, page.rect.height
+            scale = min(max_w / pw, max_h / ph)
+            w, h = pw * scale, ph * scale
+            slide = prs.slides.add_slide(blank)
+            slide.shapes.add_picture(
+                img,
+                Emu(int((max_w - w) / 2.0 * emu_per_pt)),
+                Emu(int((max_h - h) / 2.0 * emu_per_pt)),
+                width=Emu(int(w * emu_per_pt)), height=Emu(int(h * emu_per_pt)))
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        prs.save(output_path)
+        return doc.page_count, clipped
+    finally:
+        doc.close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def workspace_export(plan_path: str, output_path: str, fmt: str = "pdf",
                      dpi: int = 150, compress: bool = False, prefix: str = ""):
     """按清单导出：PDF 直接合成；图片/矢量先合成 PDF 再逐页渲染。
@@ -783,6 +852,21 @@ def workspace_export(plan_path: str, output_path: str, fmt: str = "pdf",
         if fmt == "pdf":
             _build_pdf(plan_path, output_path, compress)
             utils.dump_json(cmd_output_path, {"status": "success", "message": ""})
+            return
+
+        if fmt == "pptx":
+            # 和 PDF 一样是**单文件**产物，所以先合成 PDF 再逐页放进幻灯片
+            tmpdir = tempfile.mkdtemp(prefix="pdfguru-wspptx-")
+            try:
+                tmp_pdf = os.path.join(tmpdir, "src.pdf")
+                _build_pdf(plan_path, tmp_pdf, False)
+                pages, clipped = _export_pptx(tmp_pdf, output_path, dpi)
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            msg = f"{pages} 张幻灯片"
+            if clipped:
+                msg += "（原页面超出 PowerPoint 的 56 英寸上限，已等比缩小）"
+            utils.dump_json(cmd_output_path, {"status": "success", "message": msg})
             return
 
         is_dxf = fmt == "dxf"

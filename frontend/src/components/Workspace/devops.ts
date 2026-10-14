@@ -322,7 +322,7 @@ export async function runOps(store: any, script: string, ui?: any): Promise<stri
             case "export": {
                 const parts = arg.split("|");
                 const out = parts[0] || "";
-                const fmt = (parts[1] || "pdf") as "pdf" | "png" | "jpg" | "svg" | "dxf";
+                const fmt = (parts[1] || "pdf") as "pdf" | "pptx" | "png" | "jpg" | "svg" | "dxf";
                 const dpi = parseInt(parts[2] || "100", 10);
                 const rangeSpec = (parts[3] || "").trim();
                 let ids: string[] | null = null;

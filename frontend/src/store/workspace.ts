@@ -1224,7 +1224,7 @@ export const useWorkspaceState = defineStore("WorkspaceState", {
                 compress?: boolean;
                 backup?: boolean;
                 adopt?: boolean;
-                format?: "pdf" | "png" | "jpg" | "svg" | "dxf";
+                format?: "pdf" | "pptx" | "png" | "jpg" | "svg" | "dxf";
                 dpi?: number;
             } = {}
         ): Promise<string> {

@@ -391,7 +391,10 @@ func (a *App) wsExportTo(payloadJSON string, outFile string, format string, dpi 
 		format = "pdf"
 	}
 	isPDF := format == "pdf"
-	// 导出图片时 outFile 是目录，既不该也不能做 .bak
+	// pptx 和 pdf 一样是**单文件**产物，而 png/jpg/svg 是"一个目录里一堆文件"
+	isPPTX := format == "pptx"
+	singleFile := isPDF || isPPTX
+	// 导出图片时 outFile 是目录，既不该也不能做 .bak；pptx 也不是"写回自己的文件"
 	makeBackup = makeBackup && isPDF
 
 	if strings.TrimSpace(outFile) == "" {
@@ -399,6 +402,11 @@ func (a *App) wsExportTo(payloadJSON string, outFile string, format string, dpi 
 	}
 	if !filepath.IsAbs(outFile) {
 		return "", errors.New("输出路径必须是绝对路径")
+	}
+	// 保存对话框理论上会补好扩展名，但用户也可以直接在输入框里改，
+	// 存出一个没有扩展名的文件会双击打不开，所以这里再兜一次
+	if isPPTX && !strings.HasSuffix(strings.ToLower(outFile), ".pptx") {
+		outFile += ".pptx"
 	}
 
 	var payload struct {
@@ -477,7 +485,7 @@ func (a *App) wsExportTo(payloadJSON string, outFile string, format string, dpi 
 	if compress && isPDF {
 		args = append(args, "--compress")
 	}
-	if !isPDF {
+	if !singleFile {
 		// 图片文件名前缀用源文档名，而不是内部清单名（build-4）——后者对用户毫无意义
 		args = append(args, "--prefix", exportPrefix(pages))
 	}
@@ -487,6 +495,9 @@ func (a *App) wsExportTo(payloadJSON string, outFile string, format string, dpi 
 	}
 
 	logger.Printf("工作区导出成功: %d 页 -> %s (%s)\n", len(pages), outFile, format)
+	if isPPTX {
+		return fmt.Sprintf("已导出 %d 页为 PowerPoint（每页一张幻灯片）到 %s", len(pages), outFile), nil
+	}
 	if !isPDF {
 		return fmt.Sprintf("已导出 %d 页为 %s 到 %s", len(pages), strings.ToUpper(format), outFile), nil
 	}

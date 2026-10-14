@@ -308,6 +308,7 @@
                 <a-form-item label="格式">
                     <a-radio-group v-model:value="exportFormat" button-style="solid">
                         <a-radio-button value="pdf">PDF</a-radio-button>
+                        <a-radio-button value="pptx">PPT (PowerPoint)</a-radio-button>
                         <a-radio-button value="png">PNG 图片</a-radio-button>
                         <a-radio-button value="jpg">JPG 图片</a-radio-button>
                         <a-radio-button value="svg">SVG 矢量</a-radio-button>
@@ -327,6 +328,10 @@
                     <div v-if="isDxfExport" class="ws-note" style="margin-top: 4px;">
                         导出为 <code>名称.dxf</code>（AutoCAD R12 格式、单位毫米、按颜色分层）。
                         <b>只对矢量 PDF 有效</b>：扫描件、截图和纯文字排版里没有矢量图形，会明确报错而不是给个空文件。
+                    </div>
+                    <div v-else-if="isPptxExport" class="ws-note" style="margin-top: 4px;">
+                        每页一张幻灯片，页面保持长宽比缩放后居中铺入。
+                        幻灯片尺寸取所有页里最大的那一页，所以混排 A2/A4 时小页周围会有留白。
                     </div>
                     <div v-else-if="isImageExport" class="ws-note" style="margin-top: 4px;">
                         每页导出一个文件，命名为 <code>…-page-序号.扩展名</code>
@@ -1568,13 +1573,15 @@ export default defineComponent({
         const exportScope = ref<'all' | 'selected' | 'range'>('all');
         const exportRange = ref('');
         /** 导出格式：PDF 或图片/矢量 */
-        const exportFormat = ref<'pdf' | 'png' | 'jpg' | 'svg' | 'dxf'>('pdf');
+        const exportFormat = ref<'pdf' | 'pptx' | 'png' | 'jpg' | 'svg' | 'dxf'>('pdf');
         const exportDpi = ref(150);
         const exportCompress = ref(false);
         const exportBackup = ref(true);
 
         /** 非 PDF 的输出都写进一个目录（图片每页一个文件，DXF 是一个文件） */
-        const isImageExport = computed(() => exportFormat.value !== 'pdf');
+        // pptx 是**单文件**产物（和 pdf 一样），只有 png/jpg/svg/dxf 才写到一个目录里
+        const isPptxExport = computed(() => exportFormat.value === 'pptx');
+        const isImageExport = computed(() => !['pdf', 'pptx'].includes(exportFormat.value));
         /** DXF 特有：只有矢量内容才转得出来，扫描件会明确报错 */
         const isDxfExport = computed(() => exportFormat.value === 'dxf');
 
@@ -1620,10 +1627,10 @@ export default defineComponent({
         );
 
         /** 由当前文档名推一个默认文件名，给文件对话框当初始值 */
-        const suggestName = (suffix: string) => {
+        const suggestName = (suffix: string, ext = '.pdf') => {
             const p = store.mainPath;
             const base = p ? p.replace(/^.*[\\/]/, '').replace(/\.pdf$/i, '') : '未命名文档';
-            return `${base}${suffix}.pdf`;
+            return `${base}${suffix}${ext}`;
         };
 
         /**
@@ -1687,12 +1694,15 @@ export default defineComponent({
             exportVisible.value = true;
         };
 
-        /** 输出路径随格式变化：PDF 是文件，图片是目录 */
+        /** 输出路径随格式变化：PDF/PPTX 是文件，图片是目录 */
         const refreshExportPath = () => {
             const p = store.mainPath;
             const dir = p ? p.replace(/[\\/][^\\/]*$/, '') : '';
             if (exportFormat.value === 'pdf') {
                 exportPath.value = p ? p.replace(/\.pdf$/i, '') + '-导出.pdf' : '';
+            } else if (exportFormat.value === 'pptx') {
+                const base = p ? p.replace(/^.*[\\/]/, '').replace(/\.pdf$/i, '') : '演示文稿';
+                exportPath.value = dir ? `${dir}\\${base}.pptx` : '';
             } else {
                 // 图片会生成多个文件，所以目标是目录
                 exportPath.value = dir;
@@ -1705,7 +1715,10 @@ export default defineComponent({
                     const d: string = await WorkspacePickDir('选择导出目录');
                     if (d) exportPath.value = d;
                 } else {
-                    const p: string = await WorkspaceSaveDialog('导出 PDF', suggestName('-导出'));
+                    // 扩展名跟着格式走：对话框会据此换过滤器和补扩展名
+                    const p: string = isPptxExport.value
+                        ? await WorkspaceSaveDialog('导出为 PowerPoint', suggestName('', '.pptx'))
+                        : await WorkspaceSaveDialog('导出 PDF', suggestName('-导出'));
                     if (p) exportPath.value = p;
                 }
             } catch (e: any) {
@@ -2407,6 +2420,7 @@ export default defineComponent({
             exportDpi,
             isImageExport,
             isDxfExport,
+            isPptxExport,
             exportRangeError,
             // 页面装饰
             decorVisible,

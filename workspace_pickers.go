@@ -49,6 +49,11 @@ func wsKindFilters(kind string) []wails_runtime.FileFilter {
 			},
 			all,
 		}
+	case "pptx":
+		return []wails_runtime.FileFilter{
+			{DisplayName: "PowerPoint 演示文稿 (*.pptx)", Pattern: "*.pptx"},
+			all,
+		}
 	case "anydoc":
 		// 能拖进来的都算：一次性列全，省得用户为了找一种格式来回切过滤器
 		return []wails_runtime.FileFilter{
@@ -125,20 +130,28 @@ func (a *App) WorkspacePickDir(title string) string {
 	return d
 }
 
-// WorkspaceSaveDialog 选一个**保存到哪儿**的文件名，用于「另存为」和「导出 PDF」。
+// WorkspaceSaveDialog 选一个**保存到哪儿**的文件名，用于「另存为」「导出 PDF」「导出 PPTX」。
 //
-// 固定加 PDF 过滤器：这两个入口的产物都是 PDF，加上过滤器能省得用户手打个 .pdf，
-// 也能避免存成别的扩展名之后程序再也打不开。
-// DefaultFilename 由前端按当前文档名推出来（Workspace.vue 的 suggestName）。
+// 扩展名由 defaultName 决定：前端传 "xxx.pptx" 就按 PowerPoint 处理，否则按 PDF。
+// 这样以后再加导出格式不必往 Go 里加方法，也不会出现"选了 pptx 却被过滤器
+// 强行改成 .pdf"这种别扭事。
 //
-// 用户没写扩展名时这里补上 .pdf：Windows 对话框在部分情况下不会自动补，
+// 用户没写扩展名时补上对应扩展名：Windows 对话框在部分情况下不会自动补，
 // 存出一个没有扩展名的文件会双击打不开，看起来像是程序写错了。
 func (a *App) WorkspaceSaveDialog(title string, defaultName string) string {
+	ext := strings.ToLower(filepath.Ext(defaultName))
+	kind := "pdf"
+	if ext == ".pptx" {
+		kind = "pptx"
+	}
+	if ext == "" {
+		ext = ".pdf"
+	}
 	d, err := wails_runtime.SaveFileDialog(a.ctx, wails_runtime.SaveDialogOptions{
 		Title:            wsTitle(title, "保存"),
 		DefaultDirectory: lastDir(),
 		DefaultFilename:  defaultName,
-		Filters:          wsKindFilters("pdf"),
+		Filters:          wsKindFilters(kind),
 	})
 	if err != nil {
 		logger.Errorln(err)
@@ -147,8 +160,9 @@ func (a *App) WorkspaceSaveDialog(title string, defaultName string) string {
 	if d == "" {
 		return ""
 	}
-	if !strings.EqualFold(filepath.Ext(d), ".pdf") {
-		d += ".pdf"
+	if !strings.EqualFold(filepath.Ext(d), ext) {
+		// 用户写了别的扩展名（或没写）时，以 defaultName 的扩展名为准
+		d = strings.TrimSuffix(d, filepath.Ext(d)) + ext
 	}
 	rememberDir(d)
 	return d
