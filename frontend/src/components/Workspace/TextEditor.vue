@@ -11,7 +11,21 @@
       <span class="te-status">区域自动适配</span>
       <a-button type="text" aria-label="关闭文字编辑" :disabled="!!busy" @click="close"><CloseOutlined /></a-button>
     </header>
-    <a-alert v-if="error" type="error" :message="error" show-icon closable @close="error = ''" />
+    <!--
+      OCR 组件缺失时，除了把话说清楚，还要**在这里就能修**：
+      用户是在这一步撞上"未安装"的，让他再跑去别处找设置不合理。
+      选中的路径会被记住（ui_state.json 的 ocr_python）。
+    -->
+    <a-alert v-if="error" type="error" show-icon closable @close="error = ''">
+      <template #message>
+        <span style="white-space: pre-line">{{ error }}</span>
+        <!-- 按钮放在 message 里而不是 action 插槽：antd-vue 3 的 alert 没有 action 插槽，
+             写了也不渲染（试过，界面上什么都不出现） -->
+        <a-button v-if="showOcrPicker" size="small" style="margin-top: 8px;" @click="pickOcrRuntime">
+          选择 OCR 运行时…
+        </a-button>
+      </template>
+    </a-alert>
     <div ref="viewport" class="te-viewport" :class="{ panning }" :aria-busy="!!busy" @wheel.prevent="onWheel" @pointerdown="startPan" @pointermove="movePan" @pointerup="endPan" @pointercancel="endPan" @lostpointercapture="endPan">
       <div class="te-stage" :style="stageStyle">
         <div v-if="image" ref="pageEl" class="te-page" :style="pageStyle">
@@ -46,8 +60,9 @@
 
 <script lang="ts">
 import { computed, defineComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { message } from 'ant-design-vue';
 import { FileTextOutlined, ScanOutlined, PlusOutlined, MinusOutlined, CloseOutlined, UndoOutlined } from '@ant-design/icons-vue';
-import { WorkspaceTextRuns, WorkspaceOCR, WorkspaceTextPreview, WorkspaceThumbs } from '../../../wailsjs/go/main/App';
+import { WorkspaceTextRuns, WorkspaceOCR, WorkspaceTextPreview, WorkspaceThumbs, WorkspacePickFile, WorkspaceSetOcrRuntime } from '../../../wailsjs/go/main/App';
 import { useWorkspaceState } from '../../store/workspace';
 import { pageRectToDisplayRect, type TextRun, type TextEdit, type TextRuns, type PageItem, type NormRect } from './model';
 import { fitText } from './textLayout';
@@ -64,6 +79,27 @@ export default defineComponent({
     const edits = computed(() => item.value?.ops?.textEdits ?? []);
     const data = ref<TextRuns | null>(null), draft = ref<TextEdit | null>(null);
     const image = ref(''), busy = ref(''), source = ref('native'), error = ref('');
+// 只有当错误确实与"缺 OCR 组件"有关时才给"选择运行时"按钮，
+// 免得改个字号失败也冒出一个风马牛不相及的按钮
+const showOcrPicker = computed(() => /OCR|ocr-runtime|运行时/.test(error.value));
+
+/** 让用户指定 OCR 运行时里的 python.exe；选完立刻记住并重试当前的识别。 */
+const pickOcrRuntime = async () => {
+  try {
+    const p: string = await WorkspacePickFile('选择 OCR 运行时里的 python.exe', 'exe');
+    if (!p) return;
+    const effective: string = await WorkspaceSetOcrRuntime(p);
+    error.value = '';
+    if (effective) {
+      message.success('已记住 OCR 运行时位置，正在重试…');
+      await loadRuns(source.value as 'native' | 'ocr');
+    } else {
+      error.value = '这个路径不能用作 OCR 运行时，请确认选的是 ocr-runtime 目录里的 python.exe';
+    }
+  } catch (e: any) {
+    error.value = String(e?.message ?? e);
+  }
+};
     const viewport = ref<HTMLElement | null>(null), pageEl = ref<HTMLElement | null>(null), inputEl = ref<HTMLTextAreaElement | null>(null), toolsEl = ref<HTMLElement | null>(null);
     const zoom = ref(1), viewportWidth = ref(1000), viewportHeight = ref(650), scrollRevision = ref(0), panning = ref(false), composing = ref(false), fontReady = ref(false);
     const zoomOptions = [25,50,75,100,125,150,200,300,400];
@@ -292,7 +328,7 @@ export default defineComponent({
       await document.fonts.load('12px PdfText');fontReady.value=true;await loadRuns(props.initialSource);
     },{immediate:true});
     onBeforeUnmount(() => {generation++;imageSwap.invalidate();clearTimeout(sharpTimer);observer?.disconnect();viewport.value?.removeEventListener('scroll',onScroll);});
-    return {appIcon,edits,draft,image,busy,source,error,shownRuns,coverRects,pageStyle,stageStyle,imageStyle,liveDraft,inlineStyle,floatingStyle,viewport,pageEl,inputEl,toolsEl,panning,composing,zoom,zoomOptions,close,loadRuns,selectRun,addText,hitStyle,apply,restore,focusInput,onInputKey,setZoom,zoomBy,onWheel,fitPage,startPan,movePan,endPan};
+    return {appIcon,edits,draft,image,busy,source,error,showOcrPicker,pickOcrRuntime,shownRuns,coverRects,pageStyle,stageStyle,imageStyle,liveDraft,inlineStyle,floatingStyle,viewport,pageEl,inputEl,toolsEl,panning,composing,zoom,zoomOptions,close,loadRuns,selectRun,addText,hitStyle,apply,restore,focusInput,onInputKey,setZoom,zoomBy,onWheel,fitPage,startPan,movePan,endPan};
   },
 });
 </script>

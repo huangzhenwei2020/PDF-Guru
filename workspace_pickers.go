@@ -54,6 +54,11 @@ func wsKindFilters(kind string) []wails_runtime.FileFilter {
 			{DisplayName: "PowerPoint 演示文稿 (*.pptx)", Pattern: "*.pptx"},
 			all,
 		}
+	case "exe":
+		return []wails_runtime.FileFilter{
+			{DisplayName: "可执行文件 (*.exe)", Pattern: "*.exe"},
+			all,
+		}
 	case "anydoc":
 		// 能拖进来的都算：一次性列全，省得用户为了找一种格式来回切过滤器
 		return []wails_runtime.FileFilter{

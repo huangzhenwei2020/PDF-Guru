@@ -18,6 +18,13 @@ import (
 // 界面状态混进去只会让两边都更难懂，而且它的 SaveConfig 是按位置传参的。
 type uiState struct {
 	LastDir string `json:"last_dir"`
+	// OcrPython 是用户指定的 OCR 运行时解释器（ocr-runtime\python.exe）。
+	//
+	// 为什么不放进 config.json：那个文件是"给用户看和改的路径配置"，而它的
+	// SaveConfig 是 5 个位置参数的固定签名，加字段会牵动 Wails 接口与整个偏好表单；
+	// 这项更像"用户把组件装在哪了"的界面状态。
+	// 默认位置（exe 同级的 ocr-runtime）始终有效，这里只是覆盖它。
+	OcrPython string `json:"ocr_python"`
 }
 
 var uiStateMu sync.Mutex
@@ -77,6 +84,30 @@ func rememberDir(p string) {
 	}
 	s.LastDir = d
 	saveUIState(s)
+}
+
+// rememberOcrPython 记住用户指定的 OCR 运行时解释器。
+// 传空串表示"忘掉这个设置，回到默认位置"。
+func rememberOcrPython(p string) {
+	s := loadUIState()
+	if s.OcrPython == p {
+		return
+	}
+	s.OcrPython = p
+	saveUIState(s)
+}
+
+// savedOcrPython 返回用户设置过的 OCR 解释器路径；没设置或文件已经不在时返回空串
+// （把一个失效路径拿去启动只会得到一句莫名其妙的报错，不如当作没设置）。
+func savedOcrPython() string {
+	p := loadUIState().OcrPython
+	if p == "" {
+		return ""
+	}
+	if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+		return ""
+	}
+	return p
 }
 
 // lastDir 返回上次用过的目录；目录已经不存在时返回空串，
